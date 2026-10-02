@@ -1,0 +1,24 @@
+{
+  "name": "visionhub-platform",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/api"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace @visionhub/web run dev",
+    "dev:api": "npm --workspace @visionhub/api run dev",
+    "build": "npm --workspace @visionhub/web run build && npm --workspace @visionhub/api run typecheck",
+    "typecheck": "npm --workspace @visionhub/web run typecheck && npm --workspace @visionhub/api run typecheck",
+    "db:migrate:local": "npm --workspace @visionhub/api run db:migrate:local",
+    "db:migrate:remote": "npm --workspace @visionhub/api run db:migrate:remote",
+    "db:seed:local": "npm --workspace @visionhub/api run db:seed:local",
+    "db:seed:remote": "npm --workspace @visionhub/api run db:seed:remote",
+    "deploy:api": "npm --workspace @visionhub/api run deploy",
+    "deploy:web": "npm --workspace @visionhub/web run deploy"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
