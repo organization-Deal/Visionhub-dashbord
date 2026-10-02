@@ -50,9 +50,18 @@ contentsRoute.post('/', requireAdmin, async (c) => {
 
 contentsRoute.patch('/:id', requireAdmin, async (c) => {
   const id = c.req.param('id');
+  if (!id) return c.json({ error: 'Content id is required' }, 400);
+
   const current = await getContent(c.env, id);
   if (!current) return c.json({ error: 'Content not found' }, 404);
+
   const body = await c.req.json<Partial<ContentRow>>();
-  const row = await upsertContent(c.env, { ...current, ...body, id, title: body.title || current.title });
+  const row = await upsertContent(c.env, {
+    ...current,
+    ...body,
+    id,
+    title: body.title ?? current.title,
+  });
+
   return c.json({ data: row });
 });

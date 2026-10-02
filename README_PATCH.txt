@@ -1,6 +1,15 @@
-Visionhub build fix
-Fixed TypeScript error TS2741 in apps/web/src/App.tsx.
-PanelTitle.sub is now optional, so <PanelTitle title="Checklist ก่อนขึ้น Production" /> compiles correctly.
+Visionhub API TypeScript build fix
 
-Upload/replace only:
-apps/web/src/App.tsx
+Error fixed:
+TS2345 / TS2322 in apps/api/src/routes/contents.ts around PATCH /:id
+
+Cause:
+With the requireAdmin middleware overload, Hono types route param `id` as string | undefined.
+The code passed it into functions requiring string.
+
+Fix:
+- Validate `id` before use, narrowing it to string.
+- Use nullish coalescing for title fallback.
+
+Replace only:
+apps/api/src/routes/contents.ts
