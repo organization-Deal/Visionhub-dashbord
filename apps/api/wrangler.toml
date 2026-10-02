@@ -1,0 +1,20 @@
+name = "visionhub-api"
+main = "src/index.ts"
+compatibility_date = "2026-09-27"
+
+[vars]
+APP_ENV = "production"
+ALLOWED_ORIGIN = "*"
+OPENAI_MODEL = "gpt-6-astra"
+META_GRAPH_VERSION = "v25.0"
+META_MEDIA_METRICS = "views,reach,likes,comments,shares,saved"
+LARK_CONTENT_ID_FIELD = "Content ID"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "visionhub-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "../../database/migrations"
+
+[triggers]
+crons = ["0 * * * *", "0 2 * * *"]

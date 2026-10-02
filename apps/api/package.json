@@ -1,0 +1,23 @@
+{
+  "name": "@visionhub/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local --port 8787",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply visionhub-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply visionhub-db --remote",
+    "db:seed:local": "wrangler d1 execute visionhub-db --local --file=../../database/seed.sql",
+    "db:seed:remote": "wrangler d1 execute visionhub-db --remote --file=../../database/seed.sql"
+  },
+  "dependencies": {
+    "hono": "^4.9.9"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260927.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.40.0"
+  }
+}
