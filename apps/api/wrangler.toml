@@ -13,7 +13,7 @@ LARK_CONTENT_ID_FIELD = "Content ID"
 [[d1_databases]]
 binding = "DB"
 database_name = "visionhub-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "b5eb0315-a072-4b62-bc08-275c79968a1c"
 migrations_dir = "../../database/migrations"
 
 [triggers]
