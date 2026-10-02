@@ -291,7 +291,7 @@ function DetailDrawer({data,onClose,onAi,busy}:{data:any;onClose:()=>void;onAi:(
 
 function parseRecommendations(v:any){try{const a=typeof v==='string'?JSON.parse(v):v;return Array.isArray(a)?a.join(' · '):String(v||'');}catch{return String(v||'')}}
 function Kpi({label,value,sub,accent}:{label:string;value:string;sub:string;accent?:string}){return <div className={`kpi ${accent||''}`}><small>{label}</small><b>{value}</b><span>{sub}</span></div>}
-function PanelTitle({title,sub}:{title:string;sub:string}){return <div className="panel-title"><div><h3>{title}</h3><p>{sub}</p></div></div>}
+function PanelTitle({title,sub}:{title:string;sub?:string}){return <div className="panel-title"><div><h3>{title}</h3>{sub&&<p>{sub}</p>}</div></div>}
 function Funnel({label,value,max}:{label:string;value:number;max:number}){return <div className="funnel-row"><span>{label}</span><div><i style={{width:`${Math.max(value?5:0,(value/max)*100)}%`}}/></div><b>{fmt.format(value)}</b></div>}
 function Check({ok,text}:{ok:boolean;text:string}){return <div className={`check ${ok?'ok':''}`}><span>{ok?'✓':'!'}</span>{text}</div>}
 function Detail({label,value}:{label:string;value:any}){return <div><small>{label}</small><b>{value||'-'}</b></div>}
