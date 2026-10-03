@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Bindings } from '../types';
 import { requireAdmin } from '../lib/http';
 import { logSync } from '../lib/db';
-import { syncLarkContents } from '../services/lark';
+import { listLarkFields, syncLarkContents } from '../services/lark';
 import { syncMeta } from '../services/meta';
 import { syncTikTok } from '../services/tiktok';
 
@@ -33,6 +33,13 @@ syncRoute.post('/all', async (c) => {
     tiktok: await run('tiktok', c.env, () => syncTikTok(c.env)),
   };
   return c.json({ data: results });
+});
+
+
+syncRoute.get('/lark-fields', async (c) => {
+  const target = c.req.query('table') === 'data' ? 'data' : 'work';
+  const fields = await listLarkFields(c.env, target);
+  return c.json({ data: { table: target, count: fields.length, fields } });
 });
 
 syncRoute.get('/runs', async (c) => {

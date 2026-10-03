@@ -36,9 +36,9 @@ export function numberValue(value: unknown): number {
 
 export function extractContentId(text?: string | null): string | null {
   if (!text) return null;
-  const match = text.match(/\bVH[-_ ]?\d{4,}\b/i);
+  const match = text.match(/\bVH[-_ ]?(\d{4})[-_ ]?(\d{1,6})\b/i);
   if (!match) return null;
-  return match[0].replace(/[_ ]/g, '-').toUpperCase();
+  return `VH-${match[1]}-${String(Number(match[2])).padStart(3, '0')}`;
 }
 
 export function nowIso() {

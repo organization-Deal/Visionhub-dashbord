@@ -46,7 +46,9 @@ async function getMediaInsights(env: Bindings, mediaId: string) {
 async function findContentByText(env: Bindings, text: string) {
   const contentId = extractContentId(text);
   if (contentId) {
-    const row = await env.DB.prepare('SELECT id FROM contents WHERE id = ?').bind(contentId).first<{ id: string }>();
+    const row = await env.DB.prepare('SELECT id FROM contents WHERE content_code = ? OR id = ?')
+      .bind(contentId, contentId)
+      .first<{ id: string }>();
     if (row?.id) return row.id;
   }
   return null;

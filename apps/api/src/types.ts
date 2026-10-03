@@ -8,6 +8,8 @@ export type Bindings = {
   LARK_APP_SECRET?: string;
   LARK_BASE_APP_TOKEN?: string;
   LARK_BASE_TABLE_ID?: string;
+  LARK_WORK_TABLE_ID?: string;
+  LARK_DATA_TABLE_ID?: string;
   LARK_FIELD_MAP?: string;
   LARK_CONTENT_ID_FIELD?: string;
 
@@ -25,6 +27,7 @@ export type Bindings = {
 
 export type ContentRow = {
   id: string;
+  content_code?: string | null;
   lark_record_id?: string | null;
   title: string;
   product: string;
@@ -37,11 +40,19 @@ export type ContentRow = {
   camera_required?: string | null;
   camera_used?: string | null;
   owner?: string | null;
+  cameraman?: string | null;
+  editor?: string | null;
+  reviewer?: string | null;
   status: string;
   shoot_date?: string | null;
   publish_date?: string | null;
+  location?: string | null;
+  hook?: string | null;
+  key_message?: string | null;
   script?: string | null;
+  shot_list?: string | null;
   cta?: string | null;
+  notes?: string | null;
   source_url?: string | null;
   thumbnail_url?: string | null;
   created_at?: string;

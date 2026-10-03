@@ -10,8 +10,8 @@ async function scalar(env: Bindings, sql: string, ...bindings: any[]) {
 
 dashboardRoute.get('/overview', async (c) => {
   const [contentStats, overdue, camera, performance, ai, statusRows, productRows, topRows, upcomingRows] = await Promise.all([
-    scalar(c.env, `SELECT COUNT(*) total, SUM(CASE WHEN status IN ('POSTED','ANALYZED') THEN 1 ELSE 0 END) posted FROM contents`),
-    scalar(c.env, `SELECT COUNT(*) overdue FROM contents WHERE publish_date < date('now') AND status NOT IN ('POSTED','ANALYZED','CLOSED')`),
+    scalar(c.env, `SELECT COUNT(*) total, SUM(CASE WHEN status IN ('POSTED','ANALYZED','เผยแพร่แล้ว','วิเคราะห์แล้ว') THEN 1 ELSE 0 END) posted FROM contents`),
+    scalar(c.env, `SELECT COUNT(*) overdue FROM contents WHERE publish_date < date('now') AND status NOT IN ('POSTED','ANALYZED','CLOSED','เผยแพร่แล้ว','วิเคราะห์แล้ว','ยกเลิก')`),
     scalar(c.env, `
       SELECT
         SUM(CASE WHEN camera_required LIKE '%DSLR%' THEN 1 ELSE 0 END) dslr_required,
@@ -82,7 +82,8 @@ dashboardRoute.get('/overview', async (c) => {
 dashboardRoute.get('/config-status', async (c) => {
   return c.json({
     data: {
-      lark: Boolean(c.env.LARK_APP_ID && c.env.LARK_APP_SECRET && c.env.LARK_BASE_APP_TOKEN && c.env.LARK_BASE_TABLE_ID),
+      lark: Boolean(c.env.LARK_APP_ID && c.env.LARK_APP_SECRET && c.env.LARK_BASE_APP_TOKEN && (c.env.LARK_WORK_TABLE_ID || c.env.LARK_BASE_TABLE_ID)),
+      lark_data_ai: Boolean(c.env.LARK_DATA_TABLE_ID),
       openai: Boolean(c.env.OPENAI_API_KEY),
       meta: Boolean(c.env.META_ACCESS_TOKEN && c.env.META_IG_USER_ID),
       meta_ads: Boolean(c.env.META_ACCESS_TOKEN && c.env.META_AD_ACCOUNT_ID),
