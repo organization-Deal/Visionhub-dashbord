@@ -2,7 +2,7 @@ import type { Bindings } from '../types';
 import { extractContentId, numberValue } from '../lib/http';
 import { syncMetaMetricsToDataTable, syncSocialPerformanceTable, type MetaDataUpdate, type SocialPerformanceRow } from './lark';
 
-const META_VERSION = '3.5.1-facebook-published-posts';
+const META_VERSION = '3.5.2-facebook-safe-fields';
 
 type ContentIndexRow = {
   id: string;
@@ -725,6 +725,9 @@ async function syncFacebookInternal(
   }
 
   let response: { data: any[]; pages: number };
+  let postFieldsMode = 'enriched';
+  let engagementFieldError: string | null = null;
+
   try {
     response = await graphGetPagedWithToken(
       env,
@@ -736,18 +739,36 @@ async function syncFacebookInternal(
       },
       Math.max(1, Math.min(10, maxPages)),
     );
-  } catch {
-    // Conservative fallback if nested attachment fields are not accepted by the Graph version.
-    response = await graphGetPagedWithToken(
-      env,
-      `${page.id}/published_posts`,
-      pageToken,
-      {
-        fields: 'id,message,created_time,permalink_url,shares,reactions.limit(0).summary(true),comments.limit(0).summary(true)',
-        limit: String(Math.max(1, Math.min(100, pageSize))),
-      },
-      Math.max(1, Math.min(10, maxPages)),
-    );
+  } catch (error) {
+    engagementFieldError = error instanceof Error ? error.message : String(error);
+    postFieldsMode = 'basic';
+
+    try {
+      // Meta can return #10 when reactions/comments are requested even when the Page's
+      // own published posts are otherwise readable. Retry without user-content fields.
+      response = await graphGetPagedWithToken(
+        env,
+        `${page.id}/published_posts`,
+        pageToken,
+        {
+          fields: 'id,message,created_time,permalink_url,attachments{media_type,type,url,media},shares',
+          limit: String(Math.max(1, Math.min(100, pageSize))),
+        },
+        Math.max(1, Math.min(10, maxPages)),
+      );
+    } catch {
+      postFieldsMode = 'minimal';
+      response = await graphGetPagedWithToken(
+        env,
+        `${page.id}/published_posts`,
+        pageToken,
+        {
+          fields: 'id,message,created_time,permalink_url',
+          limit: String(Math.max(1, Math.min(100, pageSize))),
+        },
+        Math.max(1, Math.min(10, maxPages)),
+      );
+    }
   }
 
   const existing = await loadExistingFacebookMatches(env);
@@ -874,6 +895,8 @@ async function syncFacebookInternal(
       },
       pages_fetched: response.pages,
       insight_error: insightError,
+      post_fields_mode: postFieldsMode,
+      engagement_field_error: engagementFieldError,
       unmatched_examples: unmatchedExamples,
     },
     updates,
@@ -1027,7 +1050,7 @@ export async function syncInstagramBackfill(env: Bindings, pages = 5) {
     ? await syncMetaMetricsToDataTable(env, result.updates)
     : { updated: 0, unmatched_content_codes: [], lark_write_errors: [], skipped: true };
   return {
-    social_version: '3.5.1-facebook-published-posts',
+    social_version: '3.5.2-facebook-safe-fields',
     instagram: result.summary,
     social_performance: social,
     data_ai: dataAi,
@@ -1045,7 +1068,7 @@ export async function syncFacebook(env: Bindings) {
 
   return {
     meta_version: META_VERSION,
-    social_version: '3.5.1-facebook-published-posts',
+    social_version: '3.5.2-facebook-safe-fields',
     facebook: result.summary,
     social_performance: social,
     data_ai: dataAi,
@@ -1063,7 +1086,7 @@ export async function syncFacebookBackfill(env: Bindings, pages = 5) {
 
   return {
     meta_version: META_VERSION,
-    social_version: '3.5.1-facebook-published-posts',
+    social_version: '3.5.2-facebook-safe-fields',
     facebook: result.summary,
     social_performance: social,
     data_ai: dataAi,
@@ -1124,7 +1147,7 @@ export async function syncMeta(env: Bindings) {
 
   return {
     meta_version: META_VERSION,
-    social_version: '3.5.1-facebook-published-posts',
+    social_version: '3.5.2-facebook-safe-fields',
     instagram: instagram.summary,
     facebook: facebook.summary,
     ads: ads.summary,
