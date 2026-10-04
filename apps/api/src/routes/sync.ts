@@ -27,7 +27,7 @@ syncRoute.post('/meta', async (c) => c.json(await run('meta', c.env, () => syncM
 
 syncRoute.post('/meta/exchange-token', async (c) => {
   try {
-    const body = await c.req.json<{ short_token?: string }>().catch(() => ({}));
+    const body = await c.req.json<{ short_token?: string }>().catch((): { short_token?: string } => ({}));
     const shortToken = String(body?.short_token || '').trim();
     if (!shortToken) return c.json({ ok: false, error: 'short_token is required' }, 400);
 

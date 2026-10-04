@@ -2,7 +2,7 @@ import type { Bindings } from '../types';
 import { extractContentId, numberValue } from '../lib/http';
 import { syncMetaMetricsToDataTable, type MetaDataUpdate } from './lark';
 
-const META_VERSION = '3.3-token-exchange';
+const META_VERSION = '3.3.1-token-exchange-build-fix';
 
 type ContentIndexRow = {
   id: string;
