@@ -614,14 +614,32 @@ export async function syncLarkContents(env: Bindings) {
     }
   }
 
+  // Repair legacy rows where the old WORK planned date leaked into publish_date.
+  // Keep publish_date only when we have an actual platform post timestamp.
+  const cleanupResult = await env.DB.prepare(`
+    UPDATE contents
+    SET publish_date = NULL
+    WHERE publish_date IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM platform_posts p
+        WHERE p.content_id = contents.id
+          AND p.published_at IS NOT NULL
+      )
+  `).run();
+
+  const legacyPublishDatesCleared = Number((cleanupResult as any)?.meta?.changes || 0);
+
   const dataAi = await syncDataTable(env, token, syncedRows, errorRecords);
 
   return {
+    mapping_version: '2.3-date-guard',
     synced: syncedRows.length,
     total: records.length,
     skipped: skippedRecords.length,
     errors: errorRecords.length,
     generated_content_ids: contentCodeUpdates.length,
+    legacy_publish_dates_cleared: legacyPublishDatesCleared,
     skipped_records: skippedRecords,
     error_records: errorRecords,
     data_ai: dataAi,

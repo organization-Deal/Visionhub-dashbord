@@ -11,7 +11,7 @@ async function scalar(env: Bindings, sql: string, ...bindings: any[]) {
 dashboardRoute.get('/overview', async (c) => {
   const [contentStats, overdue, camera, performance, ai, statusRows, productRows, topRows, upcomingRows] = await Promise.all([
     scalar(c.env, `SELECT COUNT(*) total, SUM(CASE WHEN status IN ('POSTED','ANALYZED','เผยแพร่แล้ว','วิเคราะห์แล้ว') THEN 1 ELSE 0 END) posted FROM contents`),
-    scalar(c.env, `SELECT COUNT(*) overdue FROM contents WHERE publish_date < date('now') AND status NOT IN ('POSTED','ANALYZED','CLOSED','เผยแพร่แล้ว','วิเคราะห์แล้ว','ยกเลิก')`),
+    scalar(c.env, `SELECT COUNT(*) overdue FROM contents WHERE planned_publish_date < date('now') AND status NOT IN ('POSTED','ANALYZED','CLOSED','เผยแพร่แล้ว','วิเคราะห์แล้ว','ยกเลิก')`),
     scalar(c.env, `
       SELECT
         SUM(CASE WHEN camera_required LIKE '%DSLR%' THEN 1 ELSE 0 END) dslr_required,
@@ -56,10 +56,10 @@ dashboardRoute.get('/overview', async (c) => {
       ORDER BY COALESCE(p.qualified_leads,0) DESC, COALESCE(p.views,0) DESC LIMIT 8
     `).all(),
     c.env.DB.prepare(`
-      SELECT id,title,product,owner,status,publish_date,camera_required,camera_used
+      SELECT id,title,product,owner,status,planned_publish_date,publish_date,camera_required,camera_used
       FROM contents
-      WHERE publish_date >= date('now','-1 day')
-      ORDER BY publish_date ASC LIMIT 10
+      WHERE planned_publish_date >= date('now','-1 day')
+      ORDER BY planned_publish_date ASC LIMIT 10
     `).all(),
   ]);
 
@@ -89,6 +89,7 @@ dashboardRoute.get('/config-status', async (c) => {
       meta_ads: Boolean(c.env.META_ACCESS_TOKEN && c.env.META_AD_ACCOUNT_ID),
       tiktok: Boolean(c.env.TIKTOK_ACCESS_TOKEN),
       admin_token: Boolean(c.env.DASHBOARD_ADMIN_TOKEN),
+      mapping_version: '2.3-date-guard',
     },
   });
 });

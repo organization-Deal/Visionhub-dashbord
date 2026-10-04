@@ -86,9 +86,10 @@ export async function upsertContent(env: Bindings, content: Partial<ContentRow> 
     status: content.status || current?.status || 'ไอเดีย',
     shoot_date: content.shoot_date ?? current?.shoot_date ?? null,
     planned_publish_date: content.planned_publish_date ?? current?.planned_publish_date ?? null,
-    // publish_date is the ACTUAL platform publish date. Lark WORK sync omits it,
-    // so an existing Meta/platform value is preserved.
-    publish_date: content.publish_date ?? current?.publish_date ?? null,
+    // publish_date is the ACTUAL platform publish date.
+    // Do not accept publish_date through generic/Lark upsert paths.
+    // Only platform syncs (Meta etc.) may update it directly.
+    publish_date: current?.publish_date ?? null,
     location: content.location ?? current?.location ?? null,
     hook: content.hook ?? current?.hook ?? null,
     key_message: content.key_message ?? current?.key_message ?? null,
@@ -127,7 +128,8 @@ export async function upsertContent(env: Bindings, content: Partial<ContentRow> 
       status=excluded.status,
       shoot_date=excluded.shoot_date,
       planned_publish_date=excluded.planned_publish_date,
-      publish_date=excluded.publish_date,
+      -- IMPORTANT: publish_date is intentionally NOT updated here.
+      -- It is reserved for the actual platform publish date.
       location=excluded.location,
       hook=excluded.hook,
       key_message=excluded.key_message,
