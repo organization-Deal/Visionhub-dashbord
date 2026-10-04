@@ -484,6 +484,18 @@ function compactFields(fields: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
 
+function larkUrlField(value?: string | null) {
+  const url = String(value || '').trim();
+  if (!/^https?:\/\//i.test(url)) return undefined;
+
+  // Lark Bitable URL fields do not accept a raw string through OpenAPI.
+  // They require an object containing the actual link (and optional display text).
+  return {
+    link: url,
+    text: url,
+  };
+}
+
 function mapWorkRecord(record: LarkRecord, contentCode: string): Partial<ContentRow> & Pick<ContentRow, 'id' | 'title'> {
   const f = record.fields || {};
   const title = fieldText(f[WORK_FIELDS.title]).trim();
@@ -696,7 +708,7 @@ export async function syncSocialPerformanceTable(env: Bindings, rows: SocialPerf
       [SOCIAL_FIELDS.match_method]: row.match_method,
       [SOCIAL_FIELDS.title]: row.title || '',
       [SOCIAL_FIELDS.caption]: row.caption || '',
-      [SOCIAL_FIELDS.permalink]: row.permalink || '',
+      [SOCIAL_FIELDS.permalink]: larkUrlField(row.permalink),
       [SOCIAL_FIELDS.media_type]: row.media_type || 'Other',
       [SOCIAL_FIELDS.publish_date]: Number.isFinite(row.publish_timestamp_ms) ? row.publish_timestamp_ms : undefined,
       [SOCIAL_FIELDS.views]: row.views ?? 0,
@@ -716,7 +728,7 @@ export async function syncSocialPerformanceTable(env: Bindings, rows: SocialPerf
       [SOCIAL_FIELDS.project]: row.project || '',
       [SOCIAL_FIELDS.organic_paid]: row.organic_paid || 'Organic',
       [SOCIAL_FIELDS.ad_id]: row.ad_id || '',
-      [SOCIAL_FIELDS.thumbnail_url]: row.thumbnail_url || '',
+      [SOCIAL_FIELDS.thumbnail_url]: larkUrlField(row.thumbnail_url),
       [SOCIAL_FIELDS.last_sync]: nowMs,
       [SOCIAL_FIELDS.sync_status]: 'Sync สำเร็จ',
       [SOCIAL_FIELDS.api_error]: '',

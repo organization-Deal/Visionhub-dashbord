@@ -640,7 +640,7 @@ export async function syncInstagramBackfill(env: Bindings, pages = 5) {
     ? await syncMetaMetricsToDataTable(env, result.updates)
     : { updated: 0, unmatched_content_codes: [], lark_write_errors: [], skipped: true };
   return {
-    social_version: '3.4-social-performance',
+    social_version: '3.4.1-url-field-fix',
     instagram: result.summary,
     social_performance: social,
     data_ai: dataAi,
@@ -697,7 +697,7 @@ export async function syncMeta(env: Bindings) {
 
   return {
     meta_version: META_VERSION,
-    social_version: '3.4-social-performance',
+    social_version: '3.4.1-url-field-fix',
     instagram: instagram.summary,
     ads: ads.summary,
     social_performance: social,

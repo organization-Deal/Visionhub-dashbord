@@ -92,7 +92,7 @@ dashboardRoute.get('/config-status', async (c) => {
       admin_token: Boolean(c.env.DASHBOARD_ADMIN_TOKEN),
       mapping_version: '2.3-date-guard',
       meta_version: '3.4-social-performance',
-      social_version: '3.4-social-performance',
+      social_version: '3.4.1-url-field-fix',
       meta_app_credentials: Boolean(c.env.META_APP_ID && c.env.META_APP_SECRET),
     },
   });
