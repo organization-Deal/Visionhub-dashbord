@@ -10,6 +10,7 @@ export type Bindings = {
   LARK_BASE_TABLE_ID?: string;
   LARK_WORK_TABLE_ID?: string;
   LARK_DATA_TABLE_ID?: string;
+  LARK_SOCIAL_TABLE_ID?: string;
   LARK_FIELD_MAP?: string;
   LARK_CONTENT_ID_FIELD?: string;
 

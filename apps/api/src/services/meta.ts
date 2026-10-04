@@ -1,8 +1,8 @@
 import type { Bindings } from '../types';
 import { extractContentId, numberValue } from '../lib/http';
-import { syncMetaMetricsToDataTable, type MetaDataUpdate } from './lark';
+import { syncMetaMetricsToDataTable, syncSocialPerformanceTable, type MetaDataUpdate, type SocialPerformanceRow } from './lark';
 
-const META_VERSION = '3.3.1-token-exchange-build-fix';
+const META_VERSION = '3.4-social-performance';
 
 type ContentIndexRow = {
   id: string;
@@ -11,6 +11,8 @@ type ContentIndexRow = {
   source_url: string | null;
   planned_publish_date: string | null;
   publish_date: string | null;
+  product: string | null;
+  project: string | null;
 };
 
 type MatchResult = {
@@ -142,21 +144,30 @@ async function getMediaInsights(env: Bindings, mediaId: string) {
     .filter(Boolean);
   const result: Record<string, number> = {};
 
-  for (const metric of metrics) {
-    try {
-      const data = await graphGet(env, `${mediaId}/insights`, { metric });
-      const item = data?.data?.[0];
-      if (item) result[metric] = parseInsightValue(item);
-    } catch {
-      result[metric] = 0;
+  try {
+    const data = await graphGet(env, `${mediaId}/insights`, { metric: metrics.join(',') });
+    for (const item of data?.data || []) {
+      if (item?.name) result[String(item.name)] = parseInsightValue(item);
     }
+    return result;
+  } catch {
+    // Some media types do not allow every metric combination. Fall back safely.
+    for (const metric of metrics) {
+      try {
+        const data = await graphGet(env, `${mediaId}/insights`, { metric });
+        const item = data?.data?.[0];
+        if (item) result[metric] = parseInsightValue(item);
+      } catch {
+        result[metric] = 0;
+      }
+    }
+    return result;
   }
-  return result;
 }
 
 async function loadContentIndex(env: Bindings) {
   const result = await env.DB.prepare(`
-    SELECT id, content_code, title, source_url, planned_publish_date, publish_date
+    SELECT id, content_code, title, source_url, planned_publish_date, publish_date, product, project
     FROM contents
     WHERE content_code IS NOT NULL AND content_code <> ''
   `).all<ContentIndexRow>();
@@ -164,12 +175,14 @@ async function loadContentIndex(env: Bindings) {
   const rows = result.results || [];
   const byCode = new Map<string, ContentIndexRow>();
   const byUrl = new Map<string, ContentIndexRow>();
+  const byId = new Map<string, ContentIndexRow>();
   for (const row of rows) {
+    byId.set(row.id, row);
     if (row.content_code) byCode.set(row.content_code.toUpperCase(), row);
     const url = normalizeUrl(row.source_url);
     if (url) byUrl.set(url, row);
   }
-  return { rows, byCode, byUrl };
+  return { rows, byCode, byUrl, byId };
 }
 
 async function loadExistingInstagramMatches(env: Bindings) {
@@ -249,6 +262,36 @@ function matchInstagramMedia(
   return matchByTitle(index.rows, caption, bangkokDateFromTimestamp(media.timestamp));
 }
 
+
+function socialMatchMethod(method?: MatchResult['method']): SocialPerformanceRow['match_method'] {
+  switch (method) {
+    case 'existing_media_id': return 'Media ID';
+    case 'permalink': return 'Permalink';
+    case 'content_code': return 'Content ID';
+    case 'title_exact': return 'Exact Title';
+    case 'title_similarity': return 'Similarity';
+    default: return 'Unmatched';
+  }
+}
+
+function socialMediaType(media: any): SocialPerformanceRow['media_type'] {
+  const productType = String(media?.media_product_type || '').toUpperCase();
+  const mediaType = String(media?.media_type || '').toUpperCase();
+  if (productType === 'REELS') return 'Reel';
+  if (mediaType === 'CAROUSEL_ALBUM') return 'Carousel';
+  if (mediaType === 'VIDEO') return 'Video';
+  if (mediaType === 'IMAGE') return 'Photo';
+  return 'Other';
+}
+
+function socialProduct(value: unknown): SocialPerformanceRow['content_product'] {
+  const text = String(value || '').toLowerCase();
+  if (/human|บ้าน/.test(text)) return 'Human Allowed';
+  if (/boxing|ชก|เตะ/.test(text)) return 'Boxing Kicking';
+  if (/corporate|deal/.test(text)) return 'DEAL! Corporate';
+  return 'ไม่ระบุ';
+}
+
 function sumLeadActions(actions: any[]): number {
   let total = 0;
   for (const action of actions || []) {
@@ -315,12 +358,12 @@ function mergeMetaUpdates(updates: MetaDataUpdate[]) {
   return Array.from(map.values());
 }
 
-async function syncInstagramInternal(env: Bindings, index: Awaited<ReturnType<typeof loadContentIndex>>) {
+async function syncInstagramInternal(env: Bindings, index: Awaited<ReturnType<typeof loadContentIndex>>, maxPages = 1, pageSize = 50) {
   if (!env.META_IG_USER_ID) throw new Error('META_IG_USER_ID not configured');
   const response = await graphGetPaged(env, `${env.META_IG_USER_ID}/media`, {
-    fields: 'id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count',
-    limit: '50',
-  }, 1);
+    fields: 'id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count,thumbnail_url',
+    limit: String(Math.max(1, Math.min(100, pageSize))),
+  }, Math.max(1, Math.min(10, maxPages)));
   const existing = await loadExistingInstagramMatches(env);
 
   let processed = 0;
@@ -328,12 +371,39 @@ async function syncInstagramInternal(env: Bindings, index: Awaited<ReturnType<ty
   const methods: Record<string, number> = {};
   const unmatchedExamples: Array<{ media_id: string; published_at: string | null; caption: string }> = [];
   const updates: MetaDataUpdate[] = [];
+  const socialRows: SocialPerformanceRow[] = [];
 
   for (const media of response.data || []) {
     const caption = String(media.caption || '');
     const match = matchInstagramMedia(media, index, existing);
     const contentId = match?.id || null;
     const insights = await getMediaInsights(env, String(media.id));
+    const matchedContent = match?.id ? index.byId.get(match.id) : undefined;
+    const captionTitle = caption.split(/\r?\n/).map((v) => v.trim()).find(Boolean) || '(ไม่มี Caption)';
+
+    socialRows.push({
+      platform: 'Instagram',
+      external_post_id: String(media.id || ''),
+      content_code: match?.content_code || '',
+      match_status: match ? 'Matched' : 'Unmatched',
+      match_method: socialMatchMethod(match?.method),
+      title: captionTitle.slice(0, 240),
+      caption,
+      permalink: media.permalink || '',
+      media_type: socialMediaType(media),
+      publish_timestamp_ms: media.timestamp ? Date.parse(String(media.timestamp)) : undefined,
+      views: numberValue(insights.views),
+      reach: numberValue(insights.reach),
+      impressions: 0,
+      likes: numberValue(media.like_count),
+      comments: numberValue(media.comments_count),
+      shares: numberValue(insights.shares),
+      saves: numberValue(insights.saved),
+      content_product: socialProduct(matchedContent?.product),
+      project: matchedContent?.project || '',
+      organic_paid: 'Organic',
+      thumbnail_url: media.thumbnail_url || '',
+    });
 
     await env.DB.prepare(`
       INSERT INTO platform_posts(content_id,platform,external_post_id,url,caption,published_at,metadata_json,updated_at)
@@ -417,8 +487,10 @@ async function syncInstagramInternal(env: Bindings, index: Awaited<ReturnType<ty
       unmatched: processed - matched,
       match_methods: methods,
       unmatched_examples: unmatchedExamples,
+      pages_fetched: Math.max(1, Math.min(10, maxPages)),
     },
     updates,
+    social_rows: socialRows,
   };
 }
 
@@ -555,7 +627,24 @@ async function syncMetaAdsInternal(env: Bindings, index: Awaited<ReturnType<type
 export async function syncInstagram(env: Bindings) {
   const index = await loadContentIndex(env);
   const result = await syncInstagramInternal(env, index);
-  return result.summary;
+  const social = await syncSocialPerformanceTable(env, result.social_rows);
+  return { ...result.summary, social_performance: social };
+}
+
+export async function syncInstagramBackfill(env: Bindings, pages = 5) {
+  const index = await loadContentIndex(env);
+  const safePages = Math.max(1, Math.min(10, Number(pages) || 5));
+  const result = await syncInstagramInternal(env, index, safePages, 100);
+  const social = await syncSocialPerformanceTable(env, result.social_rows);
+  const dataAi = result.updates.length
+    ? await syncMetaMetricsToDataTable(env, result.updates)
+    : { updated: 0, unmatched_content_codes: [], lark_write_errors: [], skipped: true };
+  return {
+    social_version: '3.4-social-performance',
+    instagram: result.summary,
+    social_performance: social,
+    data_ai: dataAi,
+  };
 }
 
 export async function syncMetaAds(env: Bindings) {
@@ -604,11 +693,14 @@ export async function syncMeta(env: Bindings) {
   const dataAi = updates.length
     ? await syncMetaMetricsToDataTable(env, updates)
     : { updated: 0, unmatched_content_codes: [], lark_write_errors: [], skipped: true, reason: 'No matched content yet' };
+  const social = await syncSocialPerformanceTable(env, instagram.social_rows);
 
   return {
     meta_version: META_VERSION,
+    social_version: '3.4-social-performance',
     instagram: instagram.summary,
     ads: ads.summary,
+    social_performance: social,
     data_ai: dataAi,
   };
 }

@@ -84,13 +84,15 @@ dashboardRoute.get('/config-status', async (c) => {
     data: {
       lark: Boolean(c.env.LARK_APP_ID && c.env.LARK_APP_SECRET && c.env.LARK_BASE_APP_TOKEN && (c.env.LARK_WORK_TABLE_ID || c.env.LARK_BASE_TABLE_ID)),
       lark_data_ai: Boolean(c.env.LARK_DATA_TABLE_ID),
+      lark_social: Boolean(c.env.LARK_SOCIAL_TABLE_ID),
       openai: Boolean(c.env.OPENAI_API_KEY),
       meta: Boolean(c.env.META_ACCESS_TOKEN && c.env.META_IG_USER_ID),
       meta_ads: Boolean(c.env.META_ACCESS_TOKEN && c.env.META_AD_ACCOUNT_ID),
       tiktok: Boolean(c.env.TIKTOK_ACCESS_TOKEN),
       admin_token: Boolean(c.env.DASHBOARD_ADMIN_TOKEN),
       mapping_version: '2.3-date-guard',
-      meta_version: '3.3.1-token-exchange-build-fix',
+      meta_version: '3.4-social-performance',
+      social_version: '3.4-social-performance',
       meta_app_credentials: Boolean(c.env.META_APP_ID && c.env.META_APP_SECRET),
     },
   });

@@ -3,7 +3,7 @@ import type { Bindings } from '../types';
 import { requireAdmin } from '../lib/http';
 import { logSync } from '../lib/db';
 import { listLarkFields, syncLarkContents } from '../services/lark';
-import { exchangeMetaAccessToken, syncMeta } from '../services/meta';
+import { exchangeMetaAccessToken, syncInstagramBackfill, syncMeta } from '../services/meta';
 import { syncTikTok } from '../services/tiktok';
 
 export const syncRoute = new Hono<{ Bindings: Bindings }>();
@@ -37,6 +37,11 @@ syncRoute.post('/meta/exchange-token', async (c) => {
     const message = error instanceof Error ? error.message : String(error);
     return c.json({ ok: false, error: message }, 400);
   }
+});
+
+syncRoute.post('/social-backfill', async (c) => {
+  const pages = Math.max(1, Math.min(10, Number(c.req.query('pages') || 5)));
+  return c.json(await run('social-backfill', c.env, () => syncInstagramBackfill(c.env, pages)));
 });
 
 syncRoute.post('/tiktok', async (c) => c.json(await run('tiktok', c.env, () => syncTikTok(c.env))));

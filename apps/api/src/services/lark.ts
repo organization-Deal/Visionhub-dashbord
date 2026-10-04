@@ -84,12 +84,51 @@ const DATA_FIELDS = {
   last_meta_sync: 'Last Meta Sync',
 } as const;
 
+
+const SOCIAL_FIELDS = {
+  platform: 'Platform',
+  external_post_id: 'External Post ID',
+  content_code: 'รหัสคอนเทนต์',
+  match_status: 'Match Status',
+  match_method: 'Match Method',
+  title: 'ชื่อโพสต์ / Caption',
+  caption: 'Caption เต็ม',
+  permalink: 'Permalink',
+  media_type: 'Media Type',
+  publish_date: 'วันที่เผยแพร่',
+  views: 'Views',
+  reach: 'Reach',
+  impressions: 'Impressions',
+  likes: 'Likes',
+  comments: 'Comments',
+  shares: 'Shares',
+  saves: 'Saves',
+  clicks: 'Clicks',
+  profile_visits: 'Profile Visits',
+  followers_gained: 'Followers Gained',
+  watch_time: 'Watch Time',
+  average_watch_time: 'Average Watch Time',
+  completion_rate: 'Completion Rate',
+  content_product: 'Content Product',
+  project: 'Project',
+  organic_paid: 'Organic / Paid',
+  ad_id: 'Ad ID',
+  thumbnail_url: 'Thumbnail URL',
+  last_sync: 'Last Sync',
+  sync_status: 'Sync Status',
+  api_error: 'API Error',
+} as const;
+
 function workTableId(env: Bindings) {
   return env.LARK_WORK_TABLE_ID || env.LARK_BASE_TABLE_ID || '';
 }
 
 function dataTableId(env: Bindings) {
   return env.LARK_DATA_TABLE_ID || '';
+}
+
+function socialTableId(env: Bindings) {
+  return env.LARK_SOCIAL_TABLE_ID || '';
 }
 
 function chunk<T>(items: T[], size = BATCH_SIZE): T[][] {
@@ -585,6 +624,120 @@ async function syncDataTable(
   };
 }
 
+
+
+export type SocialPerformanceRow = {
+  platform: 'Instagram' | 'Facebook' | 'TikTok' | 'YouTube';
+  external_post_id: string;
+  content_code?: string;
+  match_status: 'Matched' | 'Unmatched' | 'Review' | 'Manual Match';
+  match_method: 'Media ID' | 'Permalink' | 'Content ID' | 'Exact Title' | 'Similarity' | 'Manual' | 'Unmatched';
+  title?: string;
+  caption?: string;
+  permalink?: string;
+  media_type?: 'Reel' | 'Video' | 'Photo' | 'Carousel' | 'Story' | 'Short' | 'Other';
+  publish_timestamp_ms?: number;
+  views?: number;
+  reach?: number;
+  impressions?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  saves?: number;
+  clicks?: number;
+  profile_visits?: number;
+  followers_gained?: number;
+  watch_time?: number;
+  average_watch_time?: number;
+  completion_rate?: number;
+  content_product?: 'Boxing Kicking' | 'Human Allowed' | 'DEAL! Corporate' | 'ไม่ระบุ';
+  project?: string;
+  organic_paid?: 'Organic' | 'Paid' | 'Organic + Paid';
+  ad_id?: string;
+  thumbnail_url?: string;
+};
+
+export async function syncSocialPerformanceTable(env: Bindings, rows: SocialPerformanceRow[]) {
+  const tableId = socialTableId(env);
+  if (!tableId) {
+    return {
+      skipped: true,
+      reason: 'LARK_SOCIAL_TABLE_ID not configured',
+      created: 0,
+      updated: 0,
+      total_existing: 0,
+    };
+  }
+  if (!rows.length) {
+    return { created: 0, updated: 0, total_existing: 0 };
+  }
+
+  const token = await getLarkTenantToken(env);
+  const existing = await listLarkRecords(env, token, tableId);
+  const byKey = new Map<string, LarkRecord>();
+
+  for (const record of existing) {
+    const platform = fieldText(record.fields?.[SOCIAL_FIELDS.platform]).trim().toLowerCase();
+    const externalId = fieldText(record.fields?.[SOCIAL_FIELDS.external_post_id]).trim();
+    if (platform && externalId) byKey.set(`${platform}|${externalId}`, record);
+  }
+
+  const nowMs = Date.now();
+  const creates: Array<{ fields: Record<string, unknown> }> = [];
+  const updates: Array<{ record_id: string; fields: Record<string, unknown> }> = [];
+
+  for (const row of rows) {
+    const key = `${row.platform.toLowerCase()}|${row.external_post_id}`;
+    const fields = compactFields({
+      [SOCIAL_FIELDS.platform]: row.platform,
+      [SOCIAL_FIELDS.external_post_id]: row.external_post_id,
+      [SOCIAL_FIELDS.content_code]: row.content_code || '',
+      [SOCIAL_FIELDS.match_status]: row.match_status,
+      [SOCIAL_FIELDS.match_method]: row.match_method,
+      [SOCIAL_FIELDS.title]: row.title || '',
+      [SOCIAL_FIELDS.caption]: row.caption || '',
+      [SOCIAL_FIELDS.permalink]: row.permalink || '',
+      [SOCIAL_FIELDS.media_type]: row.media_type || 'Other',
+      [SOCIAL_FIELDS.publish_date]: Number.isFinite(row.publish_timestamp_ms) ? row.publish_timestamp_ms : undefined,
+      [SOCIAL_FIELDS.views]: row.views ?? 0,
+      [SOCIAL_FIELDS.reach]: row.reach ?? 0,
+      [SOCIAL_FIELDS.impressions]: row.impressions ?? 0,
+      [SOCIAL_FIELDS.likes]: row.likes ?? 0,
+      [SOCIAL_FIELDS.comments]: row.comments ?? 0,
+      [SOCIAL_FIELDS.shares]: row.shares ?? 0,
+      [SOCIAL_FIELDS.saves]: row.saves ?? 0,
+      [SOCIAL_FIELDS.clicks]: row.clicks ?? 0,
+      [SOCIAL_FIELDS.profile_visits]: row.profile_visits ?? 0,
+      [SOCIAL_FIELDS.followers_gained]: row.followers_gained ?? 0,
+      [SOCIAL_FIELDS.watch_time]: row.watch_time ?? 0,
+      [SOCIAL_FIELDS.average_watch_time]: row.average_watch_time ?? 0,
+      [SOCIAL_FIELDS.completion_rate]: row.completion_rate,
+      [SOCIAL_FIELDS.content_product]: row.content_product || 'ไม่ระบุ',
+      [SOCIAL_FIELDS.project]: row.project || '',
+      [SOCIAL_FIELDS.organic_paid]: row.organic_paid || 'Organic',
+      [SOCIAL_FIELDS.ad_id]: row.ad_id || '',
+      [SOCIAL_FIELDS.thumbnail_url]: row.thumbnail_url || '',
+      [SOCIAL_FIELDS.last_sync]: nowMs,
+      [SOCIAL_FIELDS.sync_status]: 'Sync สำเร็จ',
+      [SOCIAL_FIELDS.api_error]: '',
+    });
+
+    const current = byKey.get(key);
+    if (current) updates.push({ record_id: current.record_id, fields });
+    else creates.push({ fields });
+  }
+
+  const updated = await batchUpdateRecords(env, token, tableId, updates);
+  const created = await batchCreateRecords(env, token, tableId, creates);
+
+  return {
+    created,
+    updated,
+    total_existing: existing.length,
+    total_requested: rows.length,
+    synced_at: new Date().toISOString(),
+  };
+}
 
 export type MetaDataUpdate = {
   content_code: string;
