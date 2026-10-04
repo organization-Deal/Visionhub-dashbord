@@ -63,6 +63,25 @@ const DATA_FIELDS = {
   sync_status: 'Sync Status',
   api_error: 'API Error',
   updated_at: 'Updated At',
+  instagram_media_id: 'Instagram Media ID',
+  meta_campaign_id: 'Meta Campaign ID',
+  meta_adset_id: 'Meta Ad Set ID',
+  meta_ad_id: 'Meta Ad ID',
+  views: 'ยอดดู',
+  reach: 'ยอดเข้าถึง',
+  likes: 'Likes',
+  comments: 'Comments',
+  shares: 'Shares',
+  saves: 'Saves',
+  ad_spend: 'ค่าโฆษณา',
+  ad_impressions: 'Impressions',
+  ad_reach: 'Ad Reach',
+  ad_cpm: 'CPM',
+  ad_ctr: 'CTR',
+  ad_clicks: 'Clicks',
+  ads_leads: 'Ads Leads',
+  cost_per_lead: 'Cost per Lead',
+  last_meta_sync: 'Last Meta Sync',
 } as const;
 
 function workTableId(env: Bindings) {
@@ -563,6 +582,94 @@ async function syncDataTable(
     synced_at: now,
     error_records: workErrors,
     lark_write_errors: [...updateResult.failures, ...createResult.failures],
+  };
+}
+
+
+export type MetaDataUpdate = {
+  content_code: string;
+  instagram_media_id?: string;
+  publish_timestamp_ms?: number;
+  views?: number;
+  reach?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  saves?: number;
+  meta_campaign_id?: string;
+  meta_adset_id?: string;
+  meta_ad_id?: string;
+  ad_spend?: number;
+  ad_impressions?: number;
+  ad_reach?: number;
+  ad_cpm?: number;
+  ad_ctr?: number;
+  ad_clicks?: number;
+  ads_leads?: number;
+  cost_per_lead?: number;
+};
+
+export async function syncMetaMetricsToDataTable(env: Bindings, rows: MetaDataUpdate[]) {
+  const tableId = dataTableId(env);
+  if (!tableId) {
+    return { skipped: true, reason: 'LARK_DATA_TABLE_ID not configured', updated: 0, unmatched_content_codes: [] };
+  }
+  if (!rows.length) {
+    return { updated: 0, unmatched_content_codes: [], lark_write_errors: [] };
+  }
+
+  const token = await getLarkTenantToken(env);
+  const existing = await listLarkRecords(env, token, tableId);
+  const byCode = new Map<string, LarkRecord>();
+  for (const record of existing) {
+    const code = normalizeContentCode(fieldText(record.fields?.[DATA_FIELDS.content_code]));
+    if (code) byCode.set(code, record);
+  }
+
+  const nowMs = Date.now();
+  const updates: Array<{ record_id: string; fields: Record<string, unknown> }> = [];
+  const unmatchedContentCodes: string[] = [];
+
+  for (const row of rows) {
+    const code = normalizeContentCode(row.content_code);
+    const current = byCode.get(code);
+    if (!current) {
+      unmatchedContentCodes.push(row.content_code);
+      continue;
+    }
+
+    const fields = compactFields({
+      [DATA_FIELDS.instagram_media_id]: row.instagram_media_id,
+      [DATA_FIELDS.publish_date]: Number.isFinite(row.publish_timestamp_ms) ? row.publish_timestamp_ms : undefined,
+      [DATA_FIELDS.views]: row.views,
+      [DATA_FIELDS.reach]: row.reach,
+      [DATA_FIELDS.likes]: row.likes,
+      [DATA_FIELDS.comments]: row.comments,
+      [DATA_FIELDS.shares]: row.shares,
+      [DATA_FIELDS.saves]: row.saves,
+      [DATA_FIELDS.meta_campaign_id]: row.meta_campaign_id,
+      [DATA_FIELDS.meta_adset_id]: row.meta_adset_id,
+      [DATA_FIELDS.meta_ad_id]: row.meta_ad_id,
+      [DATA_FIELDS.ad_spend]: row.ad_spend,
+      [DATA_FIELDS.ad_impressions]: row.ad_impressions,
+      [DATA_FIELDS.ad_reach]: row.ad_reach,
+      [DATA_FIELDS.ad_cpm]: row.ad_cpm,
+      [DATA_FIELDS.ad_ctr]: row.ad_ctr,
+      [DATA_FIELDS.ad_clicks]: row.ad_clicks,
+      [DATA_FIELDS.ads_leads]: row.ads_leads,
+      [DATA_FIELDS.cost_per_lead]: row.cost_per_lead,
+      [DATA_FIELDS.last_meta_sync]: nowMs,
+      [DATA_FIELDS.updated_at]: nowMs,
+    });
+    updates.push({ record_id: current.record_id, fields });
+  }
+
+  const result = await resilientUpdateDataRecords(env, token, tableId, updates);
+  return {
+    updated: result.processed,
+    requested: updates.length,
+    unmatched_content_codes: unmatchedContentCodes,
+    lark_write_errors: result.failures,
   };
 }
 
