@@ -45,10 +45,29 @@ export async function getContentByCode(env: Bindings, contentCode: string) {
   return env.DB.prepare('SELECT * FROM contents WHERE content_code = ?').bind(contentCode).first<ContentRow>();
 }
 
+export async function getContentByLarkRecordId(env: Bindings, larkRecordId: string) {
+  return env.DB.prepare('SELECT * FROM contents WHERE lark_record_id = ?').bind(larkRecordId).first<ContentRow>();
+}
+
 export async function upsertContent(env: Bindings, content: Partial<ContentRow> & Pick<ContentRow, 'id' | 'title'>) {
-  const current = await getContent(env, content.id);
+  const byId = await getContent(env, content.id);
+  const byLark = content.lark_record_id ? await getContentByLarkRecordId(env, content.lark_record_id) : null;
+  const byCode = content.content_code ? await getContentByCode(env, content.content_code) : null;
+
+  // Prefer the canonical existing record so historical platform/AI relations
+  // are preserved even if an older import used a different internal id.
+  const current = byId || byLark || byCode || null;
+  const targetId = current?.id || content.id;
+
+  // Remove stale unique keys from duplicate legacy rows before upsert.
+  if (byCode && byCode.id !== targetId) {
+    await env.DB.prepare('UPDATE contents SET content_code = NULL WHERE id = ?').bind(byCode.id).run();
+  }
+  if (byLark && byLark.id !== targetId) {
+    await env.DB.prepare('UPDATE contents SET lark_record_id = NULL WHERE id = ?').bind(byLark.id).run();
+  }
   const row: ContentRow = {
-    id: content.id,
+    id: targetId,
     content_code: content.content_code ?? current?.content_code ?? null,
     title: content.title,
     product: content.product || current?.product || 'ไม่ระบุ',

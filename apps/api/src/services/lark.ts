@@ -102,25 +102,39 @@ function fieldText(value: unknown): string {
   return '';
 }
 
-function dateText(value: unknown): string | null {
-  if (typeof value === 'number') {
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
-  }
-  const text = fieldText(value);
-  if (!text) return null;
-  const n = Number(text);
-  if (Number.isFinite(n) && n > 1000000000) {
-    const d = new Date(n);
-    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-  }
-  return text.slice(0, 10);
+function bangkokDateFromMs(ms: number): string | null {
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value || '';
+  const y = get('year');
+  const m = get('month');
+  const day = get('day');
+  return y && m && day ? `${y}-${m}-${day}` : null;
 }
 
-function dateTimeMs(value?: string | null): number | undefined {
-  if (!value) return undefined;
-  const d = new Date(value.length <= 10 ? `${value}T00:00:00.000Z` : value);
-  return Number.isNaN(d.getTime()) ? undefined : d.getTime();
+function dateText(value: unknown): string | null {
+  if (typeof value === 'number') return bangkokDateFromMs(value);
+
+  const text = fieldText(value).trim();
+  if (!text) return null;
+
+  // Lark DateTime fields are commonly returned as Unix milliseconds.
+  const n = Number(text);
+  if (Number.isFinite(n) && n > 1000000000) return bangkokDateFromMs(n);
+
+  // A plain YYYY-MM-DD value is already a local calendar date. Do not parse
+  // it through UTC because that can shift the date backwards in Thailand.
+  const plainDate = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (plainDate) return `${plainDate[1]}-${plainDate[2]}-${plainDate[3]}`;
+
+  const d = new Date(text);
+  return Number.isNaN(d.getTime()) ? text.slice(0, 10) : bangkokDateFromMs(d.getTime());
 }
 
 function contentPrefix(fields: Record<string, unknown>) {
@@ -248,6 +262,131 @@ async function batchCreateRecords(
   return processed;
 }
 
+
+type LarkWriteFailure = {
+  record_id?: string;
+  content_code?: string;
+  message: string;
+};
+
+async function resilientUpdateDataRecords(
+  env: Bindings,
+  token: string,
+  tableId: string,
+  records: Array<{ record_id: string; fields: Record<string, unknown> }>,
+) {
+  let processed = 0;
+  const failures: LarkWriteFailure[] = [];
+
+  const write = async (group: Array<{ record_id: string; fields: Record<string, unknown> }>): Promise<void> => {
+    if (!group.length) return;
+    try {
+      await larkJson(token, `${LARK_BASE}/bitable/v1/apps/${env.LARK_BASE_APP_TOKEN}/tables/${tableId}/records/batch_update`, {
+        method: 'POST',
+        body: JSON.stringify({ records: group }),
+      });
+      processed += group.length;
+    } catch (error) {
+      if (group.length > 1) {
+        const mid = Math.ceil(group.length / 2);
+        await write(group.slice(0, mid));
+        await write(group.slice(mid));
+        return;
+      }
+
+      const item = group[0];
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({
+        record_id: item.record_id,
+        content_code: fieldText(item.fields[DATA_FIELDS.content_code]),
+        message,
+      });
+
+      // Best-effort: keep the failed record visible in DATA & AI.
+      try {
+        await larkJson(token, `${LARK_BASE}/bitable/v1/apps/${env.LARK_BASE_APP_TOKEN}/tables/${tableId}/records/batch_update`, {
+          method: 'POST',
+          body: JSON.stringify({
+            records: [{
+              record_id: item.record_id,
+              fields: {
+                [DATA_FIELDS.sync_status]: 'Error',
+                [DATA_FIELDS.api_error]: message,
+                [DATA_FIELDS.last_lark_sync]: Date.now(),
+                [DATA_FIELDS.updated_at]: Date.now(),
+              },
+            }],
+          }),
+        });
+      } catch {
+        // Keep the failure in the API result even if the error marker cannot be written.
+      }
+    }
+  };
+
+  for (const group of chunk(records)) await write(group);
+  return { processed, failures };
+}
+
+async function resilientCreateDataRecords(
+  env: Bindings,
+  token: string,
+  tableId: string,
+  records: Array<{ fields: Record<string, unknown> }>,
+) {
+  let processed = 0;
+  const failures: LarkWriteFailure[] = [];
+
+  const write = async (group: Array<{ fields: Record<string, unknown> }>): Promise<void> => {
+    if (!group.length) return;
+    try {
+      await larkJson(token, `${LARK_BASE}/bitable/v1/apps/${env.LARK_BASE_APP_TOKEN}/tables/${tableId}/records/batch_create`, {
+        method: 'POST',
+        body: JSON.stringify({ records: group }),
+      });
+      processed += group.length;
+    } catch (error) {
+      if (group.length > 1) {
+        const mid = Math.ceil(group.length / 2);
+        await write(group.slice(0, mid));
+        await write(group.slice(mid));
+        return;
+      }
+
+      const item = group[0];
+      const message = error instanceof Error ? error.message : String(error);
+      const contentCode = fieldText(item.fields[DATA_FIELDS.content_code]);
+      failures.push({ content_code: contentCode, message });
+
+      // Best-effort fallback row containing only identity + error state.
+      try {
+        await larkJson(token, `${LARK_BASE}/bitable/v1/apps/${env.LARK_BASE_APP_TOKEN}/tables/${tableId}/records/batch_create`, {
+          method: 'POST',
+          body: JSON.stringify({
+            records: [{
+              fields: compactFields({
+                [DATA_FIELDS.content_code]: contentCode,
+                [DATA_FIELDS.lark_record_id]: fieldText(item.fields[DATA_FIELDS.lark_record_id]),
+                [DATA_FIELDS.title]: fieldText(item.fields[DATA_FIELDS.title]) || '(Sync Error)',
+                [DATA_FIELDS.sync_status]: 'Error',
+                [DATA_FIELDS.api_error]: message,
+                [DATA_FIELDS.last_lark_sync]: Date.now(),
+                [DATA_FIELDS.updated_at]: Date.now(),
+              }),
+            }],
+          }),
+        });
+        processed += 1;
+      } catch {
+        // Keep the failure in the API result.
+      }
+    }
+  };
+
+  for (const group of chunk(records)) await write(group);
+  return { processed, failures };
+}
+
 function assignContentCodes(records: LarkRecord[]) {
   const maxByPrefix = new Map<string, number>();
   const codeByRecord = new Map<string, string>();
@@ -282,7 +421,9 @@ function assignContentCodes(records: LarkRecord[]) {
 }
 
 function compactFields(fields: Record<string, unknown>) {
-  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+  // Keep null / empty-string values because Lark uses them to clear stale fields.
+  // Only omit undefined, which means "do not touch this field".
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
 
 function mapWorkRecord(record: LarkRecord, contentCode: string): Partial<ContentRow> & Pick<ContentRow, 'id' | 'title'> {
@@ -320,9 +461,29 @@ function mapWorkRecord(record: LarkRecord, contentCode: string): Partial<Content
   };
 }
 
-async function syncDataTable(env: Bindings, token: string, rows: ContentRow[]) {
+type WorkSyncError = {
+  record_id: string;
+  content_code: string;
+  title: string;
+  message: string;
+};
+
+async function syncDataTable(
+  env: Bindings,
+  token: string,
+  rows: ContentRow[],
+  workErrors: WorkSyncError[] = [],
+) {
   const tableId = dataTableId(env);
-  if (!tableId) return { skipped: true, reason: 'LARK_DATA_TABLE_ID not configured', created: 0, updated: 0 };
+  if (!tableId) {
+    return {
+      skipped: true,
+      reason: 'LARK_DATA_TABLE_ID not configured',
+      created: 0,
+      updated: 0,
+      error_records: workErrors,
+    };
+  }
 
   const existing = await listLarkRecords(env, token, tableId);
   const byCode = new Map<string, LarkRecord>();
@@ -343,17 +504,23 @@ async function syncDataTable(env: Bindings, token: string, rows: ContentRow[]) {
     if (!row.content_code) continue;
     const fields = compactFields({
       [DATA_FIELDS.content_code]: row.content_code,
-      [DATA_FIELDS.lark_record_id]: row.lark_record_id || undefined,
+      [DATA_FIELDS.lark_record_id]: row.lark_record_id || '',
       [DATA_FIELDS.title]: row.title,
       [DATA_FIELDS.product]: row.product,
-      [DATA_FIELDS.project]: row.project || undefined,
-      [DATA_FIELDS.content_type]: row.content_type || undefined,
-      [DATA_FIELDS.purpose]: row.purpose || undefined,
-      [DATA_FIELDS.platform]: row.platform || undefined,
-      [DATA_FIELDS.production_level]: row.production_level || undefined,
-      [DATA_FIELDS.camera_required]: row.camera_required || undefined,
-      [DATA_FIELDS.camera_used]: row.camera_used || undefined,
-      [DATA_FIELDS.publish_date]: dateTimeMs(row.publish_date),
+      [DATA_FIELDS.project]: row.project || '',
+      [DATA_FIELDS.content_type]: row.content_type || '',
+      [DATA_FIELDS.purpose]: row.purpose || '',
+      [DATA_FIELDS.platform]: row.platform || '',
+      [DATA_FIELDS.production_level]: row.production_level || '',
+      [DATA_FIELDS.camera_required]: row.camera_required || '',
+      [DATA_FIELDS.camera_used]: row.camera_used || '',
+
+      // WORK "วันที่ต้องลง" is a planned production date.
+      // DATA & AI "วันที่เผยแพร่" is reserved for the actual platform timestamp.
+      // Clear legacy planned-date values here; Meta sync will populate the real
+      // published time later.
+      [DATA_FIELDS.publish_date]: null,
+
       [DATA_FIELDS.last_lark_sync]: nowMs,
       [DATA_FIELDS.sync_status]: 'Sync สำเร็จ',
       [DATA_FIELDS.api_error]: '',
@@ -365,12 +532,39 @@ async function syncDataTable(env: Bindings, token: string, rows: ContentRow[]) {
     else creates.push({ fields });
   }
 
-  const [updated, created] = await Promise.all([
-    batchUpdateRecords(env, token, tableId, updates),
-    batchCreateRecords(env, token, tableId, creates),
+  // A failed WORK record must not keep an old "Sync สำเร็จ" status.
+  for (const failure of workErrors) {
+    const fields = compactFields({
+      [DATA_FIELDS.content_code]: failure.content_code || '',
+      [DATA_FIELDS.lark_record_id]: failure.record_id,
+      [DATA_FIELDS.title]: failure.title || '(ไม่มีชื่อ)',
+      [DATA_FIELDS.last_lark_sync]: nowMs,
+      [DATA_FIELDS.sync_status]: 'Error',
+      [DATA_FIELDS.api_error]: failure.message,
+      [DATA_FIELDS.updated_at]: nowMs,
+    });
+
+    const current =
+      (failure.content_code ? byCode.get(failure.content_code) : undefined) ||
+      byLarkRecord.get(failure.record_id);
+
+    if (current) updates.push({ record_id: current.record_id, fields });
+    else creates.push({ fields });
+  }
+
+  const [updateResult, createResult] = await Promise.all([
+    resilientUpdateDataRecords(env, token, tableId, updates),
+    resilientCreateDataRecords(env, token, tableId, creates),
   ]);
 
-  return { created, updated, total_existing: existing.length, synced_at: now };
+  return {
+    created: createResult.processed,
+    updated: updateResult.processed,
+    total_existing: existing.length,
+    synced_at: now,
+    error_records: workErrors,
+    lark_write_errors: [...updateResult.failures, ...createResult.failures],
+  };
 }
 
 export async function syncLarkContents(env: Bindings) {
@@ -386,37 +580,51 @@ export async function syncLarkContents(env: Bindings) {
   }
 
   const syncedRows: ContentRow[] = [];
-  let skipped = 0;
-  let errors = 0;
+  const skippedRecords: Array<{ record_id: string; reason: string }> = [];
+  const errorRecords: WorkSyncError[] = [];
 
   for (const record of records) {
     const title = fieldText(record.fields?.[WORK_FIELDS.title]).trim();
     if (!title) {
-      skipped++;
+      skippedRecords.push({ record_id: record.record_id, reason: 'ชื่อคอนเทนต์ว่าง' });
       continue;
     }
+
     const code = codeByRecord.get(record.record_id);
     if (!code) {
-      errors++;
+      errorRecords.push({
+        record_id: record.record_id,
+        content_code: '',
+        title,
+        message: 'ไม่สามารถสร้างหรืออ่านรหัสคอนเทนต์ได้',
+      });
       continue;
     }
+
     try {
       const mapped = mapWorkRecord(record, code);
       const saved = await upsertContent(env, mapped);
       if (saved) syncedRows.push(saved);
-    } catch {
-      errors++;
+    } catch (error) {
+      errorRecords.push({
+        record_id: record.record_id,
+        content_code: code,
+        title,
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
-  const dataAi = await syncDataTable(env, token, syncedRows);
+  const dataAi = await syncDataTable(env, token, syncedRows, errorRecords);
 
   return {
     synced: syncedRows.length,
     total: records.length,
-    skipped,
-    errors,
+    skipped: skippedRecords.length,
+    errors: errorRecords.length,
     generated_content_ids: contentCodeUpdates.length,
+    skipped_records: skippedRecords,
+    error_records: errorRecords,
     data_ai: dataAi,
   };
 }
