@@ -93,8 +93,8 @@ dashboardRoute.get('/config-status', async (c) => {
       tiktok: Boolean(c.env.TIKTOK_ACCESS_TOKEN),
       admin_token: Boolean(c.env.DASHBOARD_ADMIN_TOKEN),
       mapping_version: '2.3-date-guard',
-      meta_version: '3.5-facebook-organic',
-      social_version: '3.5-facebook-organic',
+      meta_version: '3.5.1-facebook-published-posts',
+      social_version: '3.5.1-facebook-published-posts',
       meta_app_credentials: Boolean(c.env.META_APP_ID && c.env.META_APP_SECRET),
     },
   });

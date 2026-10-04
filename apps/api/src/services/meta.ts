@@ -2,7 +2,7 @@ import type { Bindings } from '../types';
 import { extractContentId, numberValue } from '../lib/http';
 import { syncMetaMetricsToDataTable, syncSocialPerformanceTable, type MetaDataUpdate, type SocialPerformanceRow } from './lark';
 
-const META_VERSION = '3.5-facebook-organic';
+const META_VERSION = '3.5.1-facebook-published-posts';
 
 type ContentIndexRow = {
   id: string;
@@ -728,7 +728,7 @@ async function syncFacebookInternal(
   try {
     response = await graphGetPagedWithToken(
       env,
-      `${page.id}/posts`,
+      `${page.id}/published_posts`,
       pageToken,
       {
         fields: 'id,message,created_time,permalink_url,attachments{media_type,type,url,media},shares,reactions.limit(0).summary(true),comments.limit(0).summary(true)',
@@ -740,7 +740,7 @@ async function syncFacebookInternal(
     // Conservative fallback if nested attachment fields are not accepted by the Graph version.
     response = await graphGetPagedWithToken(
       env,
-      `${page.id}/posts`,
+      `${page.id}/published_posts`,
       pageToken,
       {
         fields: 'id,message,created_time,permalink_url,shares,reactions.limit(0).summary(true),comments.limit(0).summary(true)',
@@ -1027,7 +1027,7 @@ export async function syncInstagramBackfill(env: Bindings, pages = 5) {
     ? await syncMetaMetricsToDataTable(env, result.updates)
     : { updated: 0, unmatched_content_codes: [], lark_write_errors: [], skipped: true };
   return {
-    social_version: '3.5-facebook-organic',
+    social_version: '3.5.1-facebook-published-posts',
     instagram: result.summary,
     social_performance: social,
     data_ai: dataAi,
@@ -1045,7 +1045,7 @@ export async function syncFacebook(env: Bindings) {
 
   return {
     meta_version: META_VERSION,
-    social_version: '3.5-facebook-organic',
+    social_version: '3.5.1-facebook-published-posts',
     facebook: result.summary,
     social_performance: social,
     data_ai: dataAi,
@@ -1063,7 +1063,7 @@ export async function syncFacebookBackfill(env: Bindings, pages = 5) {
 
   return {
     meta_version: META_VERSION,
-    social_version: '3.5-facebook-organic',
+    social_version: '3.5.1-facebook-published-posts',
     facebook: result.summary,
     social_performance: social,
     data_ai: dataAi,
@@ -1124,7 +1124,7 @@ export async function syncMeta(env: Bindings) {
 
   return {
     meta_version: META_VERSION,
-    social_version: '3.5-facebook-organic',
+    social_version: '3.5.1-facebook-published-posts',
     instagram: instagram.summary,
     facebook: facebook.summary,
     ads: ads.summary,
