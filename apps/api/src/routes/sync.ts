@@ -3,7 +3,7 @@ import type { Bindings } from '../types';
 import { requireAdmin } from '../lib/http';
 import { logSync } from '../lib/db';
 import { listLarkFields, syncLarkContents } from '../services/lark';
-import { syncMeta } from '../services/meta';
+import { exchangeMetaAccessToken, syncMeta } from '../services/meta';
 import { syncTikTok } from '../services/tiktok';
 
 export const syncRoute = new Hono<{ Bindings: Bindings }>();
@@ -24,6 +24,21 @@ async function run(name: string, env: Bindings, fn: () => Promise<any>) {
 
 syncRoute.post('/lark', async (c) => c.json(await run('lark', c.env, () => syncLarkContents(c.env))));
 syncRoute.post('/meta', async (c) => c.json(await run('meta', c.env, () => syncMeta(c.env))));
+
+syncRoute.post('/meta/exchange-token', async (c) => {
+  try {
+    const body = await c.req.json<{ short_token?: string }>().catch(() => ({}));
+    const shortToken = String(body?.short_token || '').trim();
+    if (!shortToken) return c.json({ ok: false, error: 'short_token is required' }, 400);
+
+    const result = await exchangeMetaAccessToken(c.env, shortToken);
+    return c.json({ ok: true, result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ ok: false, error: message }, 400);
+  }
+});
+
 syncRoute.post('/tiktok', async (c) => c.json(await run('tiktok', c.env, () => syncTikTok(c.env))));
 
 syncRoute.post('/all', async (c) => {

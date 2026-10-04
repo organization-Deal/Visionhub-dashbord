@@ -16,6 +16,8 @@ export type Bindings = {
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
 
+  META_APP_ID?: string;
+  META_APP_SECRET?: string;
   META_ACCESS_TOKEN?: string;
   META_IG_USER_ID?: string;
   META_AD_ACCOUNT_ID?: string;

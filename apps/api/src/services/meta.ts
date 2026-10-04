@@ -2,7 +2,7 @@ import type { Bindings } from '../types';
 import { extractContentId, numberValue } from '../lib/http';
 import { syncMetaMetricsToDataTable, type MetaDataUpdate } from './lark';
 
-const META_VERSION = '3.2-account-id-normalizer';
+const META_VERSION = '3.3-token-exchange';
 
 type ContentIndexRow = {
   id: string;
@@ -437,7 +437,7 @@ async function syncMetaAdsInternal(env: Bindings, index: Awaited<ReturnType<type
     .replace(/\s+/g, '');
 
   if (!/^\d+$/.test(numericAdAccountId)) {
-    throw new Error(`META_AD_ACCOUNT_ID has invalid format. Use digits only, act_123..., or act=123...`);
+    throw new Error('META_AD_ACCOUNT_ID has invalid format. Use digits only, act_123..., or act=123...');
   }
 
   const account = `act_${numericAdAccountId}`;
@@ -562,6 +562,38 @@ export async function syncMetaAds(env: Bindings) {
   const index = await loadContentIndex(env);
   const result = await syncMetaAdsInternal(env, index);
   return result.summary;
+}
+
+
+export async function exchangeMetaAccessToken(env: Bindings, shortToken: string) {
+  const appId = String(env.META_APP_ID || '').trim();
+  const appSecret = String(env.META_APP_SECRET || '').trim();
+  const token = String(shortToken || '').trim();
+
+  if (!appId) throw new Error('META_APP_ID is not configured in Cloudflare.');
+  if (!appSecret) throw new Error('META_APP_SECRET is not configured in Cloudflare.');
+  if (!token) throw new Error('short_token is required.');
+
+  const url = new URL(`${baseUrl(env)}/oauth/access_token`);
+  url.searchParams.set('grant_type', 'fb_exchange_token');
+  url.searchParams.set('client_id', appId);
+  url.searchParams.set('client_secret', appSecret);
+  url.searchParams.set('fb_exchange_token', token);
+
+  const res = await fetch(url.toString(), { method: 'GET' });
+  const data = (await res.json()) as any;
+
+  if (!res.ok || data?.error) {
+    throw new Error(`Meta token exchange error: ${data?.error?.message || res.statusText}`);
+  }
+
+  const expiresIn = Number(data?.expires_in || 0);
+  return {
+    access_token: String(data?.access_token || ''),
+    token_type: String(data?.token_type || 'bearer'),
+    expires_in: expiresIn,
+    expires_at: expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000).toISOString() : null,
+  };
 }
 
 export async function syncMeta(env: Bindings) {
