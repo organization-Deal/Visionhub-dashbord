@@ -2,7 +2,7 @@ import type { Bindings } from '../types';
 import { extractContentId, numberValue } from '../lib/http';
 import { syncMetaMetricsToDataTable, type MetaDataUpdate } from './lark';
 
-const META_VERSION = '3.1-safe-match';
+const META_VERSION = '3.2-account-id-normalizer';
 
 type ContentIndexRow = {
   id: string;
@@ -430,7 +430,17 @@ async function syncMetaAdsInternal(env: Bindings, index: Awaited<ReturnType<type
     };
   }
 
-  const account = env.META_AD_ACCOUNT_ID.startsWith('act_') ? env.META_AD_ACCOUNT_ID : `act_${env.META_AD_ACCOUNT_ID}`;
+  const rawAdAccountId = String(env.META_AD_ACCOUNT_ID || '').trim();
+  const numericAdAccountId = rawAdAccountId
+    .replace(/^act[_=]?/i, '')
+    .replace(/^account[_=]?/i, '')
+    .replace(/\s+/g, '');
+
+  if (!/^\d+$/.test(numericAdAccountId)) {
+    throw new Error(`META_AD_ACCOUNT_ID has invalid format. Use digits only, act_123..., or act=123...`);
+  }
+
+  const account = `act_${numericAdAccountId}`;
   let accountInfo: any = null;
   try {
     accountInfo = await graphGet(env, account, {
