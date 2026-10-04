@@ -3,7 +3,7 @@ import type { Bindings } from '../types';
 import { requireAdmin } from '../lib/http';
 import { logSync } from '../lib/db';
 import { listLarkFields, syncLarkContents } from '../services/lark';
-import { exchangeMetaAccessToken, syncInstagramBackfill, syncMeta } from '../services/meta';
+import { exchangeMetaAccessToken, syncFacebook, syncFacebookBackfill, syncInstagramBackfill, syncMeta } from '../services/meta';
 import { syncTikTok } from '../services/tiktok';
 
 export const syncRoute = new Hono<{ Bindings: Bindings }>();
@@ -24,6 +24,14 @@ async function run(name: string, env: Bindings, fn: () => Promise<any>) {
 
 syncRoute.post('/lark', async (c) => c.json(await run('lark', c.env, () => syncLarkContents(c.env))));
 syncRoute.post('/meta', async (c) => c.json(await run('meta', c.env, () => syncMeta(c.env))));
+syncRoute.post('/facebook', async (c) => c.json(await run('facebook', c.env, () => syncFacebook(c.env))));
+
+syncRoute.post('/facebook-backfill', async (c) => {
+  const pages = Math.max(1, Math.min(10, Number(c.req.query('pages') || 5)));
+  return c.json(await run('facebook-backfill', c.env, () => syncFacebookBackfill(c.env, pages)));
+});
+
+
 
 syncRoute.post('/meta/exchange-token', async (c) => {
   try {

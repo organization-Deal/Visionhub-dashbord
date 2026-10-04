@@ -2,7 +2,7 @@ import type { Bindings } from '../types';
 import { extractContentId, numberValue } from '../lib/http';
 import { syncMetaMetricsToDataTable, syncSocialPerformanceTable, type MetaDataUpdate, type SocialPerformanceRow } from './lark';
 
-const META_VERSION = '3.4-social-performance';
+const META_VERSION = '3.5-facebook-organic';
 
 type ContentIndexRow = {
   id: string;
@@ -115,6 +115,44 @@ async function graphGetPaged(
   maxPages = 10,
 ) {
   const first = await graphGet(env, path, params);
+  const items = [...(first?.data || [])];
+  let next = first?.paging?.next ? String(first.paging.next) : '';
+  let page = 1;
+
+  while (next && page < maxPages) {
+    const res = await fetch(next);
+    const data = (await res.json()) as any;
+    if (!res.ok || data?.error) throw new Error(`Meta error: ${data?.error?.message || res.statusText}`);
+    items.push(...(data?.data || []));
+    next = data?.paging?.next ? String(data.paging.next) : '';
+    page++;
+  }
+  return { data: items, pages: page };
+}
+
+async function graphGetWithToken(
+  env: Bindings,
+  path: string,
+  accessToken: string,
+  params: Record<string, string> = {},
+) {
+  const url = new URL(`${baseUrl(env)}/${path.replace(/^\//, '')}`);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  url.searchParams.set('access_token', accessToken);
+  const res = await fetch(url.toString());
+  const data = (await res.json()) as any;
+  if (!res.ok || data?.error) throw new Error(`Meta error: ${data?.error?.message || res.statusText}`);
+  return data;
+}
+
+async function graphGetPagedWithToken(
+  env: Bindings,
+  path: string,
+  accessToken: string,
+  params: Record<string, string> = {},
+  maxPages = 10,
+) {
+  const first = await graphGetWithToken(env, path, accessToken, params);
   const items = [...(first?.data || [])];
   let next = first?.paging?.next ? String(first.paging.next) : '';
   let page = 1;
@@ -262,6 +300,138 @@ function matchInstagramMedia(
   return matchByTitle(index.rows, caption, bangkokDateFromTimestamp(media.timestamp));
 }
 
+
+
+type FacebookPageInfo = {
+  id: string;
+  name: string;
+  access_token?: string;
+  instagram_business_account?: { id?: string };
+};
+
+async function resolveFacebookPage(env: Bindings) {
+  const response = await graphGetPaged(env, 'me/accounts', {
+    fields: 'id,name,access_token,instagram_business_account',
+    limit: '100',
+  }, 5);
+
+  const pages = (response.data || []) as FacebookPageInfo[];
+  const configuredId = String(env.META_FB_PAGE_ID || '').trim().replace(/^page[_=]?/i, '');
+  let selected: FacebookPageInfo | undefined;
+  let selectionMethod = '';
+
+  if (configuredId) {
+    selected = pages.find((page) => String(page.id) === configuredId);
+    selectionMethod = 'META_FB_PAGE_ID';
+  }
+
+  if (!selected && env.META_IG_USER_ID) {
+    selected = pages.find(
+      (page) => String(page.instagram_business_account?.id || '') === String(env.META_IG_USER_ID),
+    );
+    if (selected) selectionMethod = 'connected_instagram_account';
+  }
+
+  if (!selected && pages.length === 1) {
+    selected = pages[0];
+    selectionMethod = 'single_accessible_page';
+  }
+
+  return {
+    page: selected || null,
+    selection_method: selectionMethod || null,
+    available_pages: pages.map((page) => ({
+      id: String(page.id),
+      name: String(page.name || ''),
+      connected_instagram_id: page.instagram_business_account?.id
+        ? String(page.instagram_business_account.id)
+        : null,
+    })),
+  };
+}
+
+async function loadExistingFacebookMatches(env: Bindings) {
+  const result = await env.DB.prepare(`
+    SELECT p.external_post_id, p.content_id, c.content_code
+    FROM platform_posts p
+    JOIN contents c ON c.id = p.content_id
+    WHERE p.platform = 'facebook' AND p.content_id IS NOT NULL
+  `).all<{ external_post_id: string; content_id: string; content_code: string }>();
+
+  return new Map((result.results || []).map((row) => [String(row.external_post_id), row]));
+}
+
+function matchFacebookPost(
+  post: any,
+  index: Awaited<ReturnType<typeof loadContentIndex>>,
+  existing: Map<string, { external_post_id: string; content_id: string; content_code: string }>,
+): MatchResult | null {
+  const postId = String(post.id || '');
+  const prior = existing.get(postId);
+  if (prior?.content_id && prior.content_code) {
+    return { id: prior.content_id, content_code: prior.content_code, method: 'existing_media_id', confidence: 1 };
+  }
+
+  const permalink = normalizeUrl(post.permalink_url);
+  const byUrl = permalink ? index.byUrl.get(permalink) : null;
+  if (byUrl?.content_code) {
+    return { id: byUrl.id, content_code: byUrl.content_code, method: 'permalink', confidence: 1 };
+  }
+
+  const message = String(post.message || '');
+  const code = extractContentId(message)?.toUpperCase();
+  const byCode = code ? index.byCode.get(code) : null;
+  if (byCode?.content_code) {
+    return { id: byCode.id, content_code: byCode.content_code, method: 'content_code', confidence: 1 };
+  }
+
+  return matchByTitle(index.rows, message, bangkokDateFromTimestamp(post.created_time));
+}
+
+function facebookMediaType(post: any): SocialPerformanceRow['media_type'] {
+  const first = post?.attachments?.data?.[0] || {};
+  const type = String(first?.media_type || first?.type || '').toLowerCase();
+  if (type.includes('video')) return 'Video';
+  if (type.includes('album') || type.includes('carousel')) return 'Carousel';
+  if (type.includes('photo') || type.includes('image')) return 'Photo';
+  return 'Other';
+}
+
+function facebookThumbnail(post: any) {
+  const first = post?.attachments?.data?.[0] || {};
+  return String(first?.media?.image?.src || first?.url || '').trim();
+}
+
+function facebookSummaryCount(value: any) {
+  return numberValue(value?.summary?.total_count);
+}
+
+async function getFacebookPostInsights(
+  env: Bindings,
+  pageAccessToken: string,
+  postId: string,
+) {
+  const metrics = (env.META_FB_POST_METRICS || 'post_impressions_unique,post_impressions,post_video_views')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  const values: Record<string, number> = {};
+  try {
+    const data = await graphGetWithToken(env, `${postId}/insights`, pageAccessToken, {
+      metric: metrics.join(','),
+    });
+    for (const item of data?.data || []) {
+      if (item?.name) values[String(item.name)] = parseInsightValue(item);
+    }
+    return { values, error: null as string | null };
+  } catch (error) {
+    return {
+      values,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
 
 function socialMatchMethod(method?: MatchResult['method']): SocialPerformanceRow['match_method'] {
   switch (method) {
@@ -494,6 +664,223 @@ async function syncInstagramInternal(env: Bindings, index: Awaited<ReturnType<ty
   };
 }
 
+
+async function syncFacebookInternal(
+  env: Bindings,
+  index: Awaited<ReturnType<typeof loadContentIndex>>,
+  maxPages = 1,
+  pageSize = 50,
+) {
+  let resolution: Awaited<ReturnType<typeof resolveFacebookPage>>;
+  try {
+    resolution = await resolveFacebookPage(env);
+  } catch (error) {
+    return {
+      summary: {
+        processed: 0,
+        matched: 0,
+        unmatched: 0,
+        skipped: true,
+        error: error instanceof Error ? error.message : String(error),
+        available_pages: [],
+      },
+      updates: [] as MetaDataUpdate[],
+      social_rows: [] as SocialPerformanceRow[],
+    };
+  }
+
+  if (!resolution.page) {
+    return {
+      summary: {
+        processed: 0,
+        matched: 0,
+        unmatched: 0,
+        skipped: true,
+        needs_page_selection: resolution.available_pages.length > 1,
+        message: resolution.available_pages.length
+          ? 'Facebook Page ยังเลือกไม่ได้อัตโนมัติ ให้ตั้ง META_FB_PAGE_ID จาก available_pages'
+          : 'Token นี้ไม่พบ Facebook Page ที่เข้าถึงได้',
+        available_pages: resolution.available_pages,
+      },
+      updates: [] as MetaDataUpdate[],
+      social_rows: [] as SocialPerformanceRow[],
+    };
+  }
+
+  const page = resolution.page;
+  const pageToken = String(page.access_token || env.META_ACCESS_TOKEN || '').trim();
+  if (!pageToken) {
+    return {
+      summary: {
+        processed: 0,
+        matched: 0,
+        unmatched: 0,
+        skipped: true,
+        message: 'ไม่พบ Page Access Token',
+        page: { id: page.id, name: page.name },
+      },
+      updates: [] as MetaDataUpdate[],
+      social_rows: [] as SocialPerformanceRow[],
+    };
+  }
+
+  let response: { data: any[]; pages: number };
+  try {
+    response = await graphGetPagedWithToken(
+      env,
+      `${page.id}/posts`,
+      pageToken,
+      {
+        fields: 'id,message,created_time,permalink_url,attachments{media_type,type,url,media},shares,reactions.limit(0).summary(true),comments.limit(0).summary(true)',
+        limit: String(Math.max(1, Math.min(100, pageSize))),
+      },
+      Math.max(1, Math.min(10, maxPages)),
+    );
+  } catch {
+    // Conservative fallback if nested attachment fields are not accepted by the Graph version.
+    response = await graphGetPagedWithToken(
+      env,
+      `${page.id}/posts`,
+      pageToken,
+      {
+        fields: 'id,message,created_time,permalink_url,shares,reactions.limit(0).summary(true),comments.limit(0).summary(true)',
+        limit: String(Math.max(1, Math.min(100, pageSize))),
+      },
+      Math.max(1, Math.min(10, maxPages)),
+    );
+  }
+
+  const existing = await loadExistingFacebookMatches(env);
+  let processed = 0;
+  let matched = 0;
+  const methods: Record<string, number> = {};
+  const unmatchedExamples: Array<{ post_id: string; published_at: string | null; message: string }> = [];
+  const updates: MetaDataUpdate[] = [];
+  const socialRows: SocialPerformanceRow[] = [];
+  let insightError: string | null = null;
+
+  for (const post of response.data || []) {
+    const message = String(post.message || '');
+    const match = matchFacebookPost(post, index, existing);
+    const contentId = match?.id || null;
+    const matchedContent = match?.id ? index.byId.get(match.id) : undefined;
+
+    let insightValues: Record<string, number> = {};
+    if (!insightError) {
+      const insightResult = await getFacebookPostInsights(env, pageToken, String(post.id));
+      insightValues = insightResult.values;
+      if (insightResult.error) insightError = insightResult.error;
+    }
+
+    const title = message.split(/\r?\n/).map((v) => v.trim()).find(Boolean) || '(ไม่มีข้อความโพสต์)';
+    const reach = numberValue(insightValues.post_impressions_unique);
+    const impressions = numberValue(insightValues.post_impressions);
+    const views = numberValue(insightValues.post_video_views);
+    const likes = facebookSummaryCount(post.reactions);
+    const comments = facebookSummaryCount(post.comments);
+    const shares = numberValue(post?.shares?.count);
+
+    socialRows.push({
+      platform: 'Facebook',
+      external_post_id: String(post.id || ''),
+      content_code: match?.content_code || '',
+      match_status: match ? 'Matched' : 'Unmatched',
+      match_method: socialMatchMethod(match?.method),
+      title: title.slice(0, 240),
+      caption: message,
+      permalink: post.permalink_url || '',
+      media_type: facebookMediaType(post),
+      publish_timestamp_ms: post.created_time ? Date.parse(String(post.created_time)) : undefined,
+      views,
+      reach,
+      impressions,
+      likes,
+      comments,
+      shares,
+      saves: 0,
+      content_product: socialProduct(matchedContent?.product),
+      project: matchedContent?.project || '',
+      organic_paid: 'Organic',
+      thumbnail_url: facebookThumbnail(post),
+    });
+
+    await env.DB.prepare(`
+      INSERT INTO platform_posts(content_id,platform,external_post_id,url,caption,published_at,metadata_json,updated_at)
+      VALUES(?,?,?,?,?,?,?,datetime('now'))
+      ON CONFLICT(platform,external_post_id) DO UPDATE SET
+        content_id=COALESCE(excluded.content_id,platform_posts.content_id),
+        url=excluded.url, caption=excluded.caption, published_at=excluded.published_at,
+        metadata_json=excluded.metadata_json, updated_at=datetime('now')
+    `)
+      .bind(
+        contentId,
+        'facebook',
+        String(post.id || ''),
+        post.permalink_url || null,
+        message,
+        post.created_time || null,
+        JSON.stringify({ post, match, insight_values: insightValues }),
+      )
+      .run();
+
+    if (match?.content_code) {
+      matched++;
+      methods[match.method] = (methods[match.method] || 0) + 1;
+      updates.push({
+        content_code: match.content_code,
+        facebook_post_id: String(post.id || ''),
+      });
+    } else if (unmatchedExamples.length < 10) {
+      unmatchedExamples.push({
+        post_id: String(post.id || ''),
+        published_at: post.created_time || null,
+        message: message.slice(0, 140),
+      });
+    }
+
+    await env.DB.prepare(`
+      INSERT INTO performance_snapshots(
+        content_id,platform,external_post_id,views,reach,impressions,likes,comments,shares,saves,raw_json
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+    `)
+      .bind(
+        contentId,
+        'facebook',
+        String(post.id || ''),
+        views,
+        reach,
+        impressions,
+        likes,
+        comments,
+        shares,
+        0,
+        JSON.stringify({ post, match, insight_values: insightValues }),
+      )
+      .run();
+
+    processed++;
+  }
+
+  return {
+    summary: {
+      processed,
+      matched,
+      unmatched: processed - matched,
+      match_methods: methods,
+      page: {
+        id: String(page.id),
+        name: String(page.name || ''),
+        selection_method: resolution.selection_method,
+      },
+      pages_fetched: response.pages,
+      insight_error: insightError,
+      unmatched_examples: unmatchedExamples,
+    },
+    updates,
+    social_rows: socialRows,
+  };
+}
+
 async function syncMetaAdsInternal(env: Bindings, index: Awaited<ReturnType<typeof loadContentIndex>>) {
   if (!env.META_AD_ACCOUNT_ID) {
     return {
@@ -640,8 +1027,44 @@ export async function syncInstagramBackfill(env: Bindings, pages = 5) {
     ? await syncMetaMetricsToDataTable(env, result.updates)
     : { updated: 0, unmatched_content_codes: [], lark_write_errors: [], skipped: true };
   return {
-    social_version: '3.4.1-url-field-fix',
+    social_version: '3.5-facebook-organic',
     instagram: result.summary,
+    social_performance: social,
+    data_ai: dataAi,
+  };
+}
+
+
+export async function syncFacebook(env: Bindings) {
+  const index = await loadContentIndex(env);
+  const result = await syncFacebookInternal(env, index);
+  const social = await syncSocialPerformanceTable(env, result.social_rows);
+  const dataAi = result.updates.length
+    ? await syncMetaMetricsToDataTable(env, result.updates)
+    : { updated: 0, unmatched_content_codes: [], lark_write_errors: [], skipped: true };
+
+  return {
+    meta_version: META_VERSION,
+    social_version: '3.5-facebook-organic',
+    facebook: result.summary,
+    social_performance: social,
+    data_ai: dataAi,
+  };
+}
+
+export async function syncFacebookBackfill(env: Bindings, pages = 5) {
+  const index = await loadContentIndex(env);
+  const safePages = Math.max(1, Math.min(10, Number(pages) || 5));
+  const result = await syncFacebookInternal(env, index, safePages, 100);
+  const social = await syncSocialPerformanceTable(env, result.social_rows);
+  const dataAi = result.updates.length
+    ? await syncMetaMetricsToDataTable(env, result.updates)
+    : { updated: 0, unmatched_content_codes: [], lark_write_errors: [], skipped: true };
+
+  return {
+    meta_version: META_VERSION,
+    social_version: '3.5-facebook-organic',
+    facebook: result.summary,
     social_performance: social,
     data_ai: dataAi,
   };
@@ -688,17 +1111,22 @@ export async function exchangeMetaAccessToken(env: Bindings, shortToken: string)
 export async function syncMeta(env: Bindings) {
   const index = await loadContentIndex(env);
   const instagram = await syncInstagramInternal(env, index);
+  const facebook = await syncFacebookInternal(env, index);
   const ads = await syncMetaAdsInternal(env, index);
-  const updates = mergeMetaUpdates([...instagram.updates, ...ads.updates]);
+  const updates = mergeMetaUpdates([...instagram.updates, ...facebook.updates, ...ads.updates]);
   const dataAi = updates.length
     ? await syncMetaMetricsToDataTable(env, updates)
     : { updated: 0, unmatched_content_codes: [], lark_write_errors: [], skipped: true, reason: 'No matched content yet' };
-  const social = await syncSocialPerformanceTable(env, instagram.social_rows);
+  const social = await syncSocialPerformanceTable(env, [
+    ...instagram.social_rows,
+    ...facebook.social_rows,
+  ]);
 
   return {
     meta_version: META_VERSION,
-    social_version: '3.4.1-url-field-fix',
+    social_version: '3.5-facebook-organic',
     instagram: instagram.summary,
+    facebook: facebook.summary,
     ads: ads.summary,
     social_performance: social,
     data_ai: dataAi,

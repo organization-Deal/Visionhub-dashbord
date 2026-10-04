@@ -64,6 +64,7 @@ const DATA_FIELDS = {
   api_error: 'API Error',
   updated_at: 'Updated At',
   instagram_media_id: 'Instagram Media ID',
+  facebook_post_id: 'Facebook Post ID',
   meta_campaign_id: 'Meta Campaign ID',
   meta_adset_id: 'Meta Ad Set ID',
   meta_ad_id: 'Meta Ad ID',
@@ -754,6 +755,7 @@ export async function syncSocialPerformanceTable(env: Bindings, rows: SocialPerf
 export type MetaDataUpdate = {
   content_code: string;
   instagram_media_id?: string;
+  facebook_post_id?: string;
   publish_timestamp_ms?: number;
   views?: number;
   reach?: number;
@@ -805,6 +807,7 @@ export async function syncMetaMetricsToDataTable(env: Bindings, rows: MetaDataUp
 
     const fields = compactFields({
       [DATA_FIELDS.instagram_media_id]: row.instagram_media_id,
+      [DATA_FIELDS.facebook_post_id]: row.facebook_post_id,
       [DATA_FIELDS.publish_date]: Number.isFinite(row.publish_timestamp_ms) ? row.publish_timestamp_ms : undefined,
       [DATA_FIELDS.views]: row.views,
       [DATA_FIELDS.reach]: row.reach,

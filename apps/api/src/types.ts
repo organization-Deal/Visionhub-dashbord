@@ -21,6 +21,8 @@ export type Bindings = {
   META_APP_SECRET?: string;
   META_ACCESS_TOKEN?: string;
   META_IG_USER_ID?: string;
+  META_FB_PAGE_ID?: string;
+  META_FB_POST_METRICS?: string;
   META_AD_ACCOUNT_ID?: string;
   META_GRAPH_VERSION?: string;
   META_MEDIA_METRICS?: string;
