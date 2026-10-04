@@ -35,7 +35,7 @@ const WORK_FIELDS = {
   reviewer: 'คนตรวจงาน',
   status: 'สถานะงาน',
   shoot_date: 'วันที่ต้องถ่าย',
-  publish_date: 'วันที่ต้องลง',
+  planned_publish_date: 'วันที่ต้องลง',
   location: 'สถานที่ถ่าย',
   hook: 'Hook',
   key_message: 'สารหลักที่ต้องการสื่อ',
@@ -138,7 +138,7 @@ function dateText(value: unknown): string | null {
 }
 
 function contentPrefix(fields: Record<string, unknown>) {
-  const preferredDate = dateText(fields[WORK_FIELDS.publish_date]) || dateText(fields[WORK_FIELDS.shoot_date]);
+  const preferredDate = dateText(fields[WORK_FIELDS.planned_publish_date]) || dateText(fields[WORK_FIELDS.shoot_date]);
   const d = preferredDate ? new Date(`${preferredDate}T00:00:00Z`) : new Date();
   const yy = String(d.getUTCFullYear()).slice(-2);
   const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -403,8 +403,8 @@ function assignContentCodes(records: LarkRecord[]) {
   const missing = records
     .filter((record) => fieldText(record.fields?.[WORK_FIELDS.title]).trim() && !codeByRecord.has(record.record_id))
     .sort((a, b) => {
-      const da = dateText(a.fields?.[WORK_FIELDS.publish_date]) || dateText(a.fields?.[WORK_FIELDS.shoot_date]) || '9999-12-31';
-      const db = dateText(b.fields?.[WORK_FIELDS.publish_date]) || dateText(b.fields?.[WORK_FIELDS.shoot_date]) || '9999-12-31';
+      const da = dateText(a.fields?.[WORK_FIELDS.planned_publish_date]) || dateText(a.fields?.[WORK_FIELDS.shoot_date]) || '9999-12-31';
+      const db = dateText(b.fields?.[WORK_FIELDS.planned_publish_date]) || dateText(b.fields?.[WORK_FIELDS.shoot_date]) || '9999-12-31';
       return da.localeCompare(db) || a.record_id.localeCompare(b.record_id);
     });
 
@@ -449,7 +449,7 @@ function mapWorkRecord(record: LarkRecord, contentCode: string): Partial<Content
     reviewer: fieldText(f[WORK_FIELDS.reviewer]) || null,
     status: fieldText(f[WORK_FIELDS.status]) || 'ไอเดีย',
     shoot_date: dateText(f[WORK_FIELDS.shoot_date]),
-    publish_date: dateText(f[WORK_FIELDS.publish_date]),
+    planned_publish_date: dateText(f[WORK_FIELDS.planned_publish_date]),
     location: fieldText(f[WORK_FIELDS.location]) || null,
     hook: fieldText(f[WORK_FIELDS.hook]) || null,
     key_message: fieldText(f[WORK_FIELDS.key_message]) || null,
@@ -515,11 +515,10 @@ async function syncDataTable(
       [DATA_FIELDS.camera_required]: row.camera_required || '',
       [DATA_FIELDS.camera_used]: row.camera_used || '',
 
-      // WORK "วันที่ต้องลง" is a planned production date.
-      // DATA & AI "วันที่เผยแพร่" is reserved for the actual platform timestamp.
-      // Clear legacy planned-date values here; Meta sync will populate the real
-      // published time later.
-      [DATA_FIELDS.publish_date]: null,
+      // IMPORTANT: never write DATA & AI "วันที่เผยแพร่" from WORK.
+      // It is reserved for the actual platform timestamp and will be maintained
+      // by the Meta/platform sync. Omitting the field also prevents hourly Lark
+      // syncs from clearing a real published date later.
 
       [DATA_FIELDS.last_lark_sync]: nowMs,
       [DATA_FIELDS.sync_status]: 'Sync สำเร็จ',

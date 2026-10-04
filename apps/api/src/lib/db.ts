@@ -29,7 +29,7 @@ export async function listContents(
   values.push(limit);
 
   const result = await env.DB.prepare(
-    `SELECT * FROM contents WHERE ${clauses.join(' AND ')} ORDER BY COALESCE(publish_date, '9999-12-31') ASC, updated_at DESC LIMIT ?`,
+    `SELECT * FROM contents WHERE ${clauses.join(' AND ')} ORDER BY COALESCE(planned_publish_date, publish_date, '9999-12-31') ASC, updated_at DESC LIMIT ?`,
   )
     .bind(...values)
     .all<ContentRow>();
@@ -85,6 +85,9 @@ export async function upsertContent(env: Bindings, content: Partial<ContentRow> 
     reviewer: content.reviewer ?? current?.reviewer ?? null,
     status: content.status || current?.status || 'ไอเดีย',
     shoot_date: content.shoot_date ?? current?.shoot_date ?? null,
+    planned_publish_date: content.planned_publish_date ?? current?.planned_publish_date ?? null,
+    // publish_date is the ACTUAL platform publish date. Lark WORK sync omits it,
+    // so an existing Meta/platform value is preserved.
     publish_date: content.publish_date ?? current?.publish_date ?? null,
     location: content.location ?? current?.location ?? null,
     hook: content.hook ?? current?.hook ?? null,
@@ -102,8 +105,8 @@ export async function upsertContent(env: Bindings, content: Partial<ContentRow> 
     INSERT INTO contents (
       id,content_code,lark_record_id,title,product,project,content_type,purpose,platform,format,
       production_level,camera_required,camera_used,owner,cameraman,editor,reviewer,status,
-      shoot_date,publish_date,location,hook,key_message,script,shot_list,cta,notes,source_url,thumbnail_url,updated_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+      shoot_date,planned_publish_date,publish_date,location,hook,key_message,script,shot_list,cta,notes,source_url,thumbnail_url,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       content_code=excluded.content_code,
       lark_record_id=excluded.lark_record_id,
@@ -123,6 +126,7 @@ export async function upsertContent(env: Bindings, content: Partial<ContentRow> 
       reviewer=excluded.reviewer,
       status=excluded.status,
       shoot_date=excluded.shoot_date,
+      planned_publish_date=excluded.planned_publish_date,
       publish_date=excluded.publish_date,
       location=excluded.location,
       hook=excluded.hook,
@@ -155,6 +159,7 @@ export async function upsertContent(env: Bindings, content: Partial<ContentRow> 
       row.reviewer,
       row.status,
       row.shoot_date,
+      row.planned_publish_date,
       row.publish_date,
       row.location,
       row.hook,
@@ -168,7 +173,7 @@ export async function upsertContent(env: Bindings, content: Partial<ContentRow> 
     )
     .run();
 
-  return getContent(env, content.id);
+  return getContent(env, targetId);
 }
 
 export async function logSync(env: Bindings, service: string, status: string, message: string, items = 0) {

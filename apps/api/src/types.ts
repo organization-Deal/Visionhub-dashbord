@@ -45,6 +45,7 @@ export type ContentRow = {
   reviewer?: string | null;
   status: string;
   shoot_date?: string | null;
+  planned_publish_date?: string | null;
   publish_date?: string | null;
   location?: string | null;
   hook?: string | null;

@@ -5,6 +5,24 @@ function baseUrl(env: Bindings) {
   return `https://graph.facebook.com/${env.META_GRAPH_VERSION || 'v25.0'}`;
 }
 
+function bangkokDateFromTimestamp(value: unknown): string | null {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const d = new Date(text);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value || '';
+  const y = get('year');
+  const m = get('month');
+  const day = get('day');
+  return y && m && day ? `${y}-${m}-${day}` : null;
+}
+
 async function graphGet(env: Bindings, path: string, params: Record<string, string> = {}) {
   if (!env.META_ACCESS_TOKEN) throw new Error('META_ACCESS_TOKEN not configured');
   const url = new URL(`${baseUrl(env)}/${path.replace(/^\//, '')}`);
@@ -77,6 +95,20 @@ export async function syncInstagram(env: Bindings) {
     `)
       .bind(contentId, 'instagram', String(media.id), media.permalink || null, caption, media.timestamp || null, JSON.stringify(media))
       .run();
+
+    // The real platform timestamp is the only source allowed to set publish_date.
+    // Store the local Bangkok calendar date in contents; the full timestamp remains
+    // available in platform_posts.published_at.
+    if (contentId && media.timestamp) {
+      const actualPublishDate = bangkokDateFromTimestamp(media.timestamp);
+      if (actualPublishDate) {
+        await env.DB.prepare(
+          `UPDATE contents SET publish_date = ?, updated_at = datetime('now') WHERE id = ?`,
+        )
+          .bind(actualPublishDate, contentId)
+          .run();
+      }
+    }
 
     await env.DB.prepare(`
       INSERT INTO performance_snapshots(
